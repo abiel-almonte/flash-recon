@@ -10,15 +10,13 @@ ENV PATH="/opt/.venv/bin:$PATH"
 
 RUN pip install --upgrade pip \
 && pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128 \
-&& pip install pybind11 pybind11-stubgen
+&& pip install pybind11 pybind11-stubgen black \
+&& pip install --no-build-isolation git+https://github.com/princeton-vl/lietorch.git
+
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/.venv/lib/python3.12/site-packages/torch/lib
 
 RUN wget -O libtorch.zip https://download.pytorch.org/libtorch/cu128/libtorch-shared-with-deps-2.8.0%2Bcu128.zip \
 && unzip libtorch.zip -d /opt \
 && rm libtorch.zip
-
-ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/.venv/lib/python3.12/site-packages/torch/lib
-
-RUN pip install --no-build-isolation -e pose_utils/ \
-&& pybind11-stubgen lie_ops_cuda -o pose_utils/src
 
 WORKDIR /workspace
