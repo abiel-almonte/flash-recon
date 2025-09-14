@@ -6,23 +6,30 @@ from pose_utils import (
     Intrinsics,
     pose_inv,
     pose_mul,
-    transform_points_by_pose,
-    points_to_pose_jacobian,
     pose_adjointT,
 )
 
-from projective_ops_cuda import proj_cuda, proj_jac_cuda
+from projective_ops_cuda import (
+    proj_cuda,
+    proj_jac_cuda,
+    fused_projective_cuda,
+    fused_projective_jac_cuda,
+)
 
-MIN_DEPTH = 0.01
+MIN_DEPTH = 0.2
+
+
+@functools.lru_cache(maxsize=None)
+def get_meshgrid(ht, wd, device, dtype):
+    return torch.meshgrid(
+        torch.arange(ht, device=device, dtype=dtype),
+        torch.arange(wd, device=device, dtype=dtype),
+    )
 
 
 @functools.lru_cache(maxsize=None)
 def get_camera_grid(ht, wd, fx, fy, cx, cy, device, dtype):
-    y, x = torch.meshgrid(
-        torch.arange(ht, device=device, dtype=dtype),
-        torch.arange(wd, device=device, dtype=dtype),
-        indexing="ij",
-    )
+    y, x = get_meshgrid(ht, wd, device, dtype)
     X = (x - cx) / fx
     Y = (y - cy) / fy
     i = torch.ones_like(x)
@@ -75,6 +82,36 @@ def proj_jac(Xs: torch.Tensor, intrinsics: Intrinsics):
     return jac.reshape(*Xs.shape[:-1], 2, 4)
 
 
+def projective_transform_fused(
+    poses: Pose,
+    depths: torch.Tensor,
+    intrinsics: Intrinsics,
+    ii: torch.Tensor,
+    jj: torch.Tensor,
+):
+    """Fused iproj->SE3->proj implementation.
+
+    Returns coords[edges,H,W,2], valid[edges,H,W,1].
+    """
+    coords, valid = fused_projective_cuda(
+        poses.t, poses.q, depths, intrinsics.as_tensor, ii, jj
+    )
+    return coords, valid
+
+
+def projective_transform_jac_fused(
+    poses: Pose,
+    depths: torch.Tensor,
+    intrinsics: Intrinsics,
+    ii: torch.Tensor,
+    jj: torch.Tensor,
+):
+    coords, valid, Ji, Jj, Jz = fused_projective_jac_cuda(
+        poses.t, poses.q, depths, intrinsics.as_tensor, ii, jj
+    )
+    return coords, valid, Ji, Jj, Jz
+
+
 def projective_transform(
     poses: Pose,
     depths: torch.Tensor,
@@ -82,45 +119,32 @@ def projective_transform(
     ii: torch.Tensor,
     jj: torch.Tensor,
     jacobian: bool = False,
-    return_depth: bool = False,
 ):
-    """Map points from frame ii to frame jj."""
+    """Map points from ii->jj using fused CUDA paths. Computes jacobians if requested."""
+    if jacobian:
+        return projective_transform_jac_fused(poses, depths, intrinsics, ii, jj)
+    return projective_transform_fused(poses, depths, intrinsics, ii, jj)
 
-    # Handle indexing properly - depths[ii] gives [len(ii), H, W]
-    depths_ii = depths[ii]  # [len(ii), H, W]
-    X0 = iproj(depths_ii, intrinsics).contiguous()  # Ensure contiguous for CUDA
-    Gij = pose_mul(poses[jj], pose_inv(poses[ii]))
 
-    mask = ii == jj
-    if mask.any():
-        n_same = int(mask.sum())
-        device, dtype = Gij.q.device, Gij.q.dtype
+def induced_flow(
+    poses: Pose,
+    disps: torch.Tensor,
+    intrinsics: Intrinsics,
+    ii: torch.Tensor,
+    jj: torch.Tensor,
+):
+    """optical flow induced by camera motion"""
 
-        identity_t = torch.zeros((n_same, 3), device=device, dtype=dtype)
-        identity_t[:, 0] = -0.1
-        identity_q = torch.tensor([0, 0, 0, 1], device=device, dtype=dtype).expand(
-            n_same, -1
-        )
+    if len(disps.shape) >= 3:
+        ht, wd = disps.shape[-2:]
+    else:
+        raise ValueError(f"Expected at least 3D tensor, got shape {disps.shape}")
 
-        Gij.t[mask] = identity_t
-        Gij.q[mask] = identity_q
+    y, x = get_meshgrid(ht, wd, poses.device, poses.dtype)
 
-    X1 = transform_points_by_pose(Gij, X0)
+    coords0 = torch.stack([x, y], dim=-1)
 
-    x1 = proj(X1, intrinsics, return_depth)
+    # Use fused projective transform for speed
+    coords1, valid = projective_transform_fused(poses, disps, intrinsics, ii, jj)
 
-    valid = ((X1[..., 2] > MIN_DEPTH) & (X0[..., 2] > MIN_DEPTH)).float().unsqueeze(-1)
-
-    if not jacobian:
-        return x1, valid
-
-    Jz = iproj_jac(depths.shape, depths.device, depths.dtype)  # wrt depths
-    Jp = proj_jac(X1, intrinsics)  # wrt projection
-    Ja = points_to_pose_jacobian(X1)  # wrt pose_j
-
-    Jj = torch.matmul(Jp, Ja)
-    Ji = -pose_adjointT(Gij, Jj)
-    Jz_trans = transform_points_by_pose(Gij, Jz)
-    Jz = torch.matmul(Jp, Jz_trans.unsqueeze(-1))
-
-    return x1, valid, (Ji, Jj, Jz)
+    return coords1 - coords0, valid

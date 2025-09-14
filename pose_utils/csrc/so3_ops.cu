@@ -24,6 +24,35 @@ __global__ void quat_multiply_kernel(const float *q1, const float *q2, float *re
     result[idx4 + 3] = q1w * q2w - q1x * q2x - q1y * q2y - q1z * q2z; // w
 }
 
+__global__ void single_quat_rotate_kernel(const float *q, const float *points, float *out, const int batch_size) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= batch_size)
+        return;
+
+    const int idx3 = idx * 3;
+
+    const float qx = q[0];
+    const float qy = q[1];
+    const float qz = q[2];
+    const float qw = q[3];
+
+    const float px = points[idx3 + 0];
+    const float py = points[idx3 + 1];
+    const float pz = points[idx3 + 2];
+
+    const float ux = 2.0f * (qy * pz - qz * py);
+    const float uy = 2.0f * (qz * px - qx * pz);
+    const float uz = 2.0f * (qx * py - qy * px);
+
+    const float vx = qy * uz - qz * uy;
+    const float vy = qz * ux - qx * uz;
+    const float vz = qx * uy - qy * ux;
+
+    out[idx3 + 0] = px + qw * ux + vx;
+    out[idx3 + 1] = py + qw * uy + vy;
+    out[idx3 + 2] = pz + qw * uz + vz;
+}
+
 __global__ void quat_rotate_kernel(const float *q, const float *points, float *out, const int batch_size) {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= batch_size)
@@ -153,13 +182,27 @@ torch::Tensor quat_multiply_cuda(torch::Tensor &q1, torch::Tensor &q2) {
     const int batch_size = q1.size(0);
     auto out = torch::zeros_like(q1);
 
-    const int threads = 256;
-    const int blocks = (batch_size + threads - 1) / threads;
+    const int blocks = (batch_size + THREADS - 1) / THREADS;
 
-    quat_multiply_kernel<<<blocks, threads>>>(q1.data_ptr<float>(), q2.data_ptr<float>(), out.data_ptr<float>(), batch_size);
+    quat_multiply_kernel<<<blocks, THREADS>>>(q1.data_ptr<float>(), q2.data_ptr<float>(), out.data_ptr<float>(), batch_size);
 
     return out;
 }
+
+torch::Tensor single_quat_rotate_cuda(torch::Tensor &q, torch::Tensor &points) {
+    CHECK_INPUT(q);
+    CHECK_INPUT(points);
+
+    const int batch_size = points.size(0);
+    auto out = torch::zeros_like(points);
+
+    const int blocks = (batch_size + THREADS - 1) / THREADS;
+
+    single_quat_rotate_kernel<<<blocks, THREADS>>>(q.data_ptr<float>(), points.data_ptr<float>(), out.data_ptr<float>(), batch_size);
+
+    return out;
+}
+
 
 torch::Tensor quat_rotate_cuda(torch::Tensor &q, torch::Tensor &points) {
     CHECK_INPUT(q);
@@ -168,10 +211,9 @@ torch::Tensor quat_rotate_cuda(torch::Tensor &q, torch::Tensor &points) {
     const int batch_size = q.size(0);
     auto out = torch::zeros_like(points);
 
-    const int threads = 256;
-    const int blocks = (batch_size + threads - 1) / threads;
+    const int blocks = (batch_size + THREADS - 1) / THREADS;
 
-    quat_rotate_kernel<<<blocks, threads>>>(q.data_ptr<float>(), points.data_ptr<float>(), out.data_ptr<float>(), batch_size);
+    quat_rotate_kernel<<<blocks, THREADS>>>(q.data_ptr<float>(), points.data_ptr<float>(), out.data_ptr<float>(), batch_size);
 
     return out;
 }
@@ -182,10 +224,9 @@ torch::Tensor quat_to_matrix_cuda(torch::Tensor &q) {
     const int batch_size = q.size(0);
     auto result = torch::zeros({batch_size, 3, 3}, q.options());
 
-    const int threads = 256;
-    const int blocks = (batch_size + threads - 1) / threads;
+    const int blocks = (batch_size + THREADS - 1) / THREADS;
 
-    quat_to_matrix_kernel<<<blocks, threads>>>(q.data_ptr<float>(), result.data_ptr<float>(), batch_size);
+    quat_to_matrix_kernel<<<blocks, THREADS>>>(q.data_ptr<float>(), result.data_ptr<float>(), batch_size);
 
     return result;
 }
@@ -196,10 +237,9 @@ torch::Tensor matrix_to_quat_cuda(torch::Tensor &R) {
     const int batch_size = R.size(0);
     auto result = torch::zeros({batch_size, 4}, R.options());
 
-    const int threads = 256;
-    const int blocks = (batch_size + threads - 1) / threads;
+    const int blocks = (batch_size + THREADS - 1) / THREADS;
 
-    matrix_to_quat_kernel<<<blocks, threads>>>(
+    matrix_to_quat_kernel<<<blocks, THREADS>>>(
         R.data_ptr<float>(),
         result.data_ptr<float>(),
         batch_size);

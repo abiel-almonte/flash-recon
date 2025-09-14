@@ -19,10 +19,14 @@ from lie_ops_cuda import (
     matrix_to_quat_cuda,
     quat_multiply_cuda,
     quat_rotate_cuda,
+    single_quat_rotate_cuda,
     quat_to_matrix_cuda,
     se3_exp_cuda,
     se3_log_cuda,
     se3_point_jac_cuda,
+    se3_transform3d_cuda,
+    se3_transform4d_cuda,
+    se3_adjointT_cuda,
 )
 
 __all__ = [
@@ -43,8 +47,12 @@ __all__ = [
     "matrix_to_quat_cuda",
     "quat_multiply_cuda",
     "quat_rotate_cuda",
+    "single_quat_rotate_cuda",
     "quat_to_matrix_cuda",
     "se3_exp_cuda",
     "se3_log_cuda",
     "se3_point_jac_cuda",
+    "se3_transform3d_cuda",
+    "se3_transform4d_cuda",
+    "se3_adjointT_cuda",
 ]

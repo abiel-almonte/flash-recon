@@ -5,9 +5,17 @@ from .ops import (
     iproj_jac,
     proj_jac,
     projective_transform,
+    projective_transform_fused,
+    projective_transform_jac_fused,
+    induced_flow,
 )
 
-from projective_ops_cuda import proj_cuda, proj_jac_cuda
+from projective_ops_cuda import (
+    proj_cuda,
+    proj_jac_cuda,
+    fused_projective_cuda,
+    fused_projective_jac_cuda,
+)
 
 __all__ = [
     "get_camera_grid",
@@ -16,6 +24,11 @@ __all__ = [
     "iproj_jac",
     "proj_jac",
     "projective_transform",
+    "projective_transform_fused",
+    "projective_transform_jac_fused",
+    "induced_flow",
     "proj_cuda",
     "proj_jac_cuda",
+    "fused_projective_cuda",
+    "fused_projective_jac_cuda",
 ]
