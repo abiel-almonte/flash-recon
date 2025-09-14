@@ -9,7 +9,7 @@ class Intrinsics:
     fy: float
     cx: float
     cy: float
-    device: str = "cpu"
+    device: str = "cuda"
     dtype: torch.dtype = torch.float32
 
     def __iter__(self):

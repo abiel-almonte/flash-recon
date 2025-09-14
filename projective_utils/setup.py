@@ -7,6 +7,7 @@ ext_modules = [
         sources=[
             "csrc/bindings.cpp",
             "csrc/proj_ops.cu",
+            "csrc/fused_proj.cu",
         ],
         include_dirs=[
             "csrc/",

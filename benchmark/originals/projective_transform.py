@@ -116,3 +116,18 @@ def projective_transform(poses, depths, intrinsics, ii, jj, jacobian=False, retu
         return x1, valid, (Ji, Jj, Jz)
 
     return x1, valid
+
+
+def induced_flow(poses, disps, intrinsics, ii, jj):
+    """ optical flow induced by camera motion """
+
+    ht, wd = disps.shape[2:]
+    y, x = torch.meshgrid(
+        torch.arange(ht).to(disps.device).float(),
+        torch.arange(wd).to(disps.device).float())
+
+    coords0 = torch.stack([x, y], dim=-1)
+    coords1, valid = projective_transform(poses, disps, intrinsics, ii, jj)
+
+    return coords1[...,:2] - coords0, valid
+

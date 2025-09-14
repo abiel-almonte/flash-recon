@@ -11,10 +11,14 @@ from lie_ops_cuda import (
     se3_log_cuda,
     se3_exp_cuda,
     se3_point_jac_cuda,
+    single_quat_rotate_cuda,
     quat_rotate_cuda,
     quat_multiply_cuda,
     quat_to_matrix_cuda,
     matrix_to_quat_cuda,
+    se3_transform3d_cuda,
+    se3_transform4d_cuda,
+    se3_adjointT_cuda,
 )
 
 # Pure functional lie group operations
@@ -98,23 +102,16 @@ def transform_points_by_pose(pose: Pose, points: torch.Tensor) -> torch.Tensor:
     """
 
     if points.shape[-1] == 3:
-        # Handle broadcasting: expand pose to match number of points
-        if len(pose.q.shape) == 2 and pose.q.shape[0] == 1 and len(points.shape) == 2:
-            N = points.shape[0]
-            q_expanded = pose.q.expand(N, -1).contiguous()
-            rotated = quat_rotate_cuda(q_expanded, points)
-            return rotated + pose.t[0]  # [N, 3] + [3]
-        else:
-            return quat_rotate_cuda(pose.q, points) + pose.t
+        B = pose.q.shape[0]
+        pts = points.view(B, -1, 3).contiguous()
+        out = se3_transform3d_cuda(pose.t, pose.q, pts)
+        return out.view_as(points)
 
     elif points.shape[-1] == 4:
-        out = torch.zeros_like(points)
-        xyz = points[..., :3].contiguous()  # Ensure contiguous for CUDA
-        w = points[..., 3:4].contiguous()
-
-        out[..., :3] = quat_rotate_cuda(pose.q, xyz) + pose.t * w
-        out[..., 3:4] = w
-        return out
+        B = pose.q.shape[0]
+        pts = points.view(B, -1, 4).contiguous()
+        out = se3_transform4d_cuda(pose.t, pose.q, pts)
+        return out.view_as(points)
 
     else:
         raise ValueError(f"Points must be 3D or 4D, got shape {points.shape}")
@@ -224,7 +221,7 @@ def pose_retraction(pose: Pose, tangent: Tangent) -> Pose:
 def pose_adjointT(pose: Pose, jac: torch.Tensor) -> torch.Tensor:
     """
     Apply SE(3) adjoint transpose to a Jacobian tensor.
-    Optimized for raw speed (uses batched matmul via cuBLAS).
+    Uses fused CUDA kernel for speed.
 
     Args:
         pose: SE3 pose with rotation (quaternion) and translation [B, ...].
@@ -236,25 +233,6 @@ def pose_adjointT(pose: Pose, jac: torch.Tensor) -> torch.Tensor:
 
     original_shape = jac.shape
     B = pose.q.size(0)
-
-    jac_flat = jac.view(B, -1, 2, 6)
-
-    R_T = quat_to_matrix_cuda(pose.q).transpose(-2, -1)  # [B, 3, 3]
-    t = pose.t  # [B, 3]
-
-    jac_rho = jac_flat[..., :3]  # [B, S, 2, 3]
-    jac_phi = jac_flat[..., 3:]  # [B, S, 2, 3]
-
-    t_cross_phi = torch.cross(t[:, None, None, :], jac_phi, dim=-1)  # [B, S, 2, 3]
-
-    rho_in = (jac_rho + t_cross_phi).reshape(B, -1, 3)  # [B, S*2, 3]
-    phi_in = jac_phi.reshape(B, -1, 3)  # [B, S*2, 3]
-
-    rho_rot = torch.bmm(rho_in, R_T)  # [B, S*2, 3]
-    phi_rot = torch.bmm(phi_in, R_T)  # [B, S*2, 3]
-
-    rho_rot = rho_rot.view(B, -1, 2, 3)
-    phi_rot = phi_rot.view(B, -1, 2, 3)
-    result = torch.cat([rho_rot, phi_rot], dim=-1)
-
-    return result.view(original_shape)
+    jac_flat = jac.view(B, -1, 2, 6).contiguous()
+    out = se3_adjointT_cuda(pose.t, pose.q, jac_flat)
+    return out.view(original_shape)
