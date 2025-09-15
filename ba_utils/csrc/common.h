@@ -19,31 +19,14 @@
     CHECK_LONG(x)
 
 #define THREADS 256
-#define HALF_MINDEPTH 0.1
 
-torch::Tensor proj_jac_cuda(torch::Tensor &p, const float fx, const float fy, const float cx, const float cy);
-torch::Tensor proj_cuda(torch::Tensor &p, const float fx, const float fy, const float cx, const float cy, const int last_dim);
-
-// Fused iproj -> transform -> proj
-std::vector<torch::Tensor> fused_projective_cuda(
+std::vector<torch::Tensor> fused_projective_transform_with_reduction_cuda(
     torch::Tensor t,
     torch::Tensor q,
     torch::Tensor disps,
     torch::Tensor intrinsics,
     torch::Tensor ii,
-    torch::Tensor jj);
-
-std::vector<torch::Tensor> fused_projective_jac_cuda(
-    torch::Tensor t,
-    torch::Tensor q,
-    torch::Tensor disps,
-    torch::Tensor intrinsics,
-    torch::Tensor ii,
-    torch::Tensor jj);
-
-std::vector<torch::Tensor> fused_induced_flow_cuda(
-    torch::Tensor t,
-    torch::Tensor q,
-    torch::Tensor disps,
-    torch::Tensor intrinsics,
-    torch::Tensor ii, torch::Tensor jj);
+    torch::Tensor jj,
+    torch::Tensor target,
+    torch::Tensor weight
+);

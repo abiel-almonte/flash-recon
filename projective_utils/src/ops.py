@@ -1,19 +1,14 @@
 import functools
 import torch
 
-from pose_utils import (
-    Pose,
-    Intrinsics,
-    pose_inv,
-    pose_mul,
-    pose_adjointT,
-)
+from pose_utils import Pose, Intrinsics
 
 from projective_ops_cuda import (
     proj_cuda,
     proj_jac_cuda,
     fused_projective_cuda,
     fused_projective_jac_cuda,
+    fused_induced_flow_cuda,
 )
 
 MIN_DEPTH = 0.2
@@ -112,6 +107,23 @@ def projective_transform_jac_fused(
     return coords, valid, Ji, Jj, Jz
 
 
+def induced_flow_fused(
+    poses: Pose,
+    depths: torch.Tensor,
+    intrinsics: Intrinsics,
+    ii: torch.Tensor,
+    jj: torch.Tensor,
+):
+    """Fused iproj->SE3->proj implementation computing optical flow
+
+    Returns coords[edges,H,W,2], valid[edges,H,W,1].
+    """
+    coords, valid = fused_induced_flow_cuda(
+        poses.t, poses.q, depths, intrinsics.as_tensor, ii, jj
+    )
+    return coords, valid
+
+
 def projective_transform(
     poses: Pose,
     depths: torch.Tensor,
@@ -134,17 +146,4 @@ def induced_flow(
     jj: torch.Tensor,
 ):
     """optical flow induced by camera motion"""
-
-    if len(disps.shape) >= 3:
-        ht, wd = disps.shape[-2:]
-    else:
-        raise ValueError(f"Expected at least 3D tensor, got shape {disps.shape}")
-
-    y, x = get_meshgrid(ht, wd, poses.device, poses.dtype)
-
-    coords0 = torch.stack([x, y], dim=-1)
-
-    # Use fused projective transform for speed
-    coords1, valid = projective_transform_fused(poses, disps, intrinsics, ii, jj)
-
-    return coords1 - coords0, valid
+    return induced_flow_fused(poses, disps, intrinsics, ii, jj)

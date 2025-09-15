@@ -75,8 +75,8 @@ def benchmark_projective_transform():
     ii = torch.tensor([0], device=device)
     jj = torch.tensor([1], device=device)
     
-    orig_time = time_func(lambda: projective_transform_original(orig_poses, orig_depths, orig_intrinsics, ii, jj, jacobian=True), n=2000)
-    cuda_time = time_func(lambda: projective_transform_new(cuda_poses, cuda_depths, cuda_intrinsics, ii, jj, jacobian=True), n=2000)
+    orig_time = time_func(lambda: projective_transform_original(orig_poses, orig_depths, orig_intrinsics, ii, jj, jacobian=False), n=2000)
+    cuda_time = time_func(lambda: projective_transform_new(cuda_poses, cuda_depths, cuda_intrinsics, ii, jj, jacobian=False), n=2000)
     #fused_time = time_func(lambda: projective_transform_fused(cuda_poses, cuda_depths, cuda_intrinsics, ii, jj), n=1000)
     
     print(f"Projective Transform:")

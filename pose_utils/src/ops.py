@@ -1,8 +1,8 @@
 import torch
 
-from pose import Pose
-from tangent import Tangent
-from constants import (
+from .pose import Pose
+from .tangent import Tangent
+from .constants import (
     get_sign,
     get_eye4,
 )

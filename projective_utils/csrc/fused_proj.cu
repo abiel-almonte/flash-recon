@@ -53,6 +53,7 @@ __device__ inline void relSE3(const float *ti, const float *qi, const float *tj,
     tij[2] = tj[2] - ti_rot[2];
 }
 
+template<bool INDUCED_FLOW>
 __global__ void fused_projective_kernel(
     const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> t,
     const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> q,
@@ -131,6 +132,10 @@ __global__ void fused_projective_kernel(
             coords[e][i][j][1] = fy * (Xj[1] * invz) + cy;
         }
 
+        if (INDUCED_FLOW){
+            coords[e][i][j][0] -= u;
+            coords[e][i][j][1] -= v;
+        }
         valid[e][i][j][0] = (Xj[2] > 0.2f && Xi[2] > 0.2f) ? 1.0f : 0.0f;
     }
 }
@@ -168,23 +173,20 @@ __device__ inline void neg_adjointT(const float* rotT, const float* t, const flo
     for (int i = 0; i < 2; i++){
         const int i6 = i*6;
 
-        float rho0 = Jj[i6 + 0];
-        float rho1 = Jj[i6 + 1];
-        float rho2 = Jj[i6 + 2];
+        const float rho0 = Jj[i6 + 0];
+        const float rho1 = Jj[i6 + 1];
+        const float rho2 = Jj[i6 + 2];
 
-        float phi0 = Jj[i6 + 3];
-        float phi1 = Jj[i6 + 4];
-        float phi2 = Jj[i6 + 5];
-
-        rho0 += ty * phi2 - tz * phi1;
-        rho1 += tz * phi0 - tx * phi2;
-        rho2 += tx * phi1 - ty * phi0;
-
-        for (int j = 0; j < 3; j++){
+        // phi - (t x rho)
+        const float phi0 = Jj[i6 + 3] - (ty * rho2 - tz * rho1);
+        const float phi1 = Jj[i6 + 4] - (tz * rho0 - tx * rho2);
+        const float phi2 = Jj[i6 + 5] - (tx * rho1 - ty * rho0);
+        
+        // R^T * rho and R^T * phi
+        for (int j = 0; j < 3; j++) {
             const int j3 = j*3;
-
-            Ji_out[i*6 + j] = -(rho0 * rotT[j3] + rho1 * rotT[j3 + 1] + rho2 * rotT[j3 + 2]);
-            Ji_out[i*6 + j + 3] = -(phi0 * rotT[j3] + phi1 * rotT[j3 + 1] + phi2 * rotT[j3 + 2]);
+            Ji_out[i6 + j] = -(rotT[j3 + 0]*rho0 + rotT[j3 + 1]*rho1 + rotT[j3 + 2]*rho2);
+            Ji_out[i6 + j + 3] = -(rotT[j3 + 0]*phi0 + rotT[j3 + 1]*phi1 + rotT[j3 + 2]*phi2);
         }
     }
 }
@@ -270,7 +272,7 @@ __global__ void fused_projective_with_cache_kernel(
         }
 
         valid[e][i][j][0] = (Xj[2] > 0.2f && Xi[2] > 0.2f) ? 1.0f : 0.0f;
-        
+
         // Cache transformed point for Jacobian computation
         Xj_cache[e][i][j][0] = Xj[0];
         Xj_cache[e][i][j][1] = Xj[1];
@@ -286,12 +288,11 @@ __global__ void projective_jacobians_kernel(
     const torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits> intr,
     const torch::PackedTensorAccessor32<long, 1, torch::RestrictPtrTraits> ii,
     const torch::PackedTensorAccessor32<long, 1, torch::RestrictPtrTraits> jj,
-    const torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> coords,
     const torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> valid,
     const torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> Xj_cache,
-    torch::PackedTensorAccessor32<at::Half, 5, torch::RestrictPtrTraits> Ji_out,
-    torch::PackedTensorAccessor32<at::Half, 5, torch::RestrictPtrTraits> Jj_out,
-    torch::PackedTensorAccessor32<at::Half, 5, torch::RestrictPtrTraits> Jz_out
+    torch::PackedTensorAccessor32<float, 5, torch::RestrictPtrTraits> Ji_out,
+    torch::PackedTensorAccessor32<float, 5, torch::RestrictPtrTraits> Jj_out,
+    torch::PackedTensorAccessor32<float, 5, torch::RestrictPtrTraits> Jz_out
 ) {
     const int e = blockIdx.x;
     const int tid = threadIdx.x;
@@ -339,73 +340,39 @@ __global__ void projective_jacobians_kernel(
         const int i = k / wd;
         const int j = k % wd;
         
-        // Check if this pixel is valid (computed by previous kernel)
-        const bool vmask = (valid[e][i][j][0] > 0.5f);
-        
-        if (vmask) {
+        if (valid[e][i][j][0] > 0.5f) {
             const float x = Xj_cache[e][i][j][0];
             const float y = Xj_cache[e][i][j][1]; 
             const float z = Xj_cache[e][i][j][2];
             const float h = Xj_cache[e][i][j][3];
-            
             const float invz = 1.0f / z;
-            const float d = invz, d2 = d * d;
 
-            // Compute Jacobians
-            const float fx_h_d = fx * h * d, fy_h_d = fy * h * d;
-            const float fx_d2 = fx * d2, fy_d2 = fy * d2;
+            const float fx_invz = fx*invz;
+            const float fy_invz = fy*invz;
+            const float neg_fx_x_invz2 = -fx*x*invz*invz;
+            const float neg_fy_y_invz2 = -fy*y*invz*invz;
 
-            // Compute Jacobians in float32, then convert to half precision
-            float Jj_temp[12];
-            float Jz_temp[2];
-            
             // Jj computation
-            Jj_temp[0] = fx_h_d;
-            Jj_temp[1] = 0.0f;
-            Jj_temp[2] = -fx * x * h * d2;
-            Jj_temp[3] = -fx_d2 * x * y;
-            Jj_temp[4] = fx_d2 * (1.0f + x * x);
-            Jj_temp[5] = -fx * y * d;
-            Jj_temp[6] = 0.0f;       
+            Jj_out[e][i][j][0][0] = (h*(fx_invz));
+            Jj_out[e][i][j][0][1] = (0.0f);
+            Jj_out[e][i][j][0][2] = (h*(neg_fx_x_invz2));
+            Jj_out[e][i][j][0][3] = (y*(neg_fx_x_invz2));
+            Jj_out[e][i][j][0][4] = (z*(fx_invz) - x*(neg_fx_x_invz2));
+            Jj_out[e][i][j][0][5] = (-y*(fx_invz));
 
-            Jj_temp[7] = fy_h_d;
-            Jj_temp[8] = -fy * y * h * d2; 
-            Jj_temp[9] = -fy_d2 * (1.0f + y * y);
-            Jj_temp[10] = fy_d2 * x * y;
-            Jj_temp[11] = fx * x * d;
+            Jj_out[e][i][j][1][0] = (0.0f);       
+            Jj_out[e][i][j][1][1] = (h*(fy_invz));
+            Jj_out[e][i][j][1][2] = (h*(neg_fy_y_invz2));
+            Jj_out[e][i][j][1][3] = (-z*(fy_invz) + y*(neg_fy_y_invz2));
+            Jj_out[e][i][j][1][4] = (-x*(neg_fy_y_invz2));
+            Jj_out[e][i][j][1][5] = (x*(fy_invz));
 
             // Jz computation
-            Jz_temp[0] = fx * (tij[0] * d - tij[2] * (x * d2));
-            Jz_temp[1] = fy * (tij[1] * d - tij[2] * (y * d2));
-            
-            for (int r = 0; r < 2; r++) {
-                for (int c = 0; c < 6; c++) {
-                    Jj_out[e][i][j][r][c] = __float2half(Jj_temp[r*6 + c]);
-                }
-                Jz_out[e][i][j][r][0] = __float2half(Jz_temp[r]);
-            }
+            Jz_out[e][i][j][0][0] = (fx * (tij[0] * invz - tij[2] * x * invz * invz));
+            Jz_out[e][i][j][1][0] = (fy * (tij[1] * invz - tij[2] * y * invz * invz));
 
-            float Ji_temp[12];
-            neg_adjointT(rotT, tij, Jj_temp, Ji_temp);
-            
-            for (int r = 0; r < 2; r++) {
-                for (int c = 0; c < 6; c++) {
-                    Ji_out[e][i][j][r][c] = __float2half(Ji_temp[r*6 + c]);
-                }
-            }
-        } else {
-            const at::Half zero_half = __float2half(0.0f);
-
-            #pragma unroll
-            for (int c = 0; c < 6; c++) {
-                Ji_out[e][i][j][0][c] = zero_half;
-                Ji_out[e][i][j][1][c] = zero_half;
-                Jj_out[e][i][j][0][c] = zero_half;
-                Jj_out[e][i][j][1][c] = zero_half;
-            }
-
-            Jz_out[e][i][j][0][0] = zero_half;
-            Jz_out[e][i][j][1][0] = zero_half;
+            // Ji computation
+            neg_adjointT(rotT, tij, &Jj_out[e][i][j][0][0], &Ji_out[e][i][j][0][0]);
         }
     }
 }
@@ -432,7 +399,7 @@ std::vector<torch::Tensor> fused_projective_cuda(
     torch::Tensor coords = torch::zeros({E, H, W, 2}, opts);
     torch::Tensor valid = torch::zeros({E, H, W, 1}, opts);
 
-    fused_projective_kernel<<<E, THREADS>>>(
+    fused_projective_kernel<false><<<E, THREADS>>>(
         t.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
         q.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
         disps.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
@@ -443,9 +410,46 @@ std::vector<torch::Tensor> fused_projective_cuda(
         valid.packed_accessor32<float, 4, torch::RestrictPtrTraits>()
     );
 
+    return {coords, valid};
+}
+
+
+std::vector<torch::Tensor> fused_induced_flow_cuda(
+    torch::Tensor t,          // [B,3]
+    torch::Tensor q,          // [B,4]
+    torch::Tensor disps,      // [B,H,W]
+    torch::Tensor intrinsics, // [4]
+    torch::Tensor ii, torch::Tensor jj
+) {
+    CHECK_INPUT(t);
+    CHECK_INPUT(q);
+    CHECK_INPUT(disps);
+    CHECK_INPUT(intrinsics);
+    CHECK_INPUTL(ii);
+    CHECK_INPUTL(jj);
+
+    const int E = ii.size(0);
+    const int H = disps.size(1);
+    const int W = disps.size(2);
+
+    auto opts = disps.options();
+    torch::Tensor coords = torch::zeros({E, H, W, 2}, opts);
+    torch::Tensor valid = torch::zeros({E, H, W, 1}, opts);
+
+    fused_projective_kernel<true><<<E, THREADS>>>(
+        t.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        q.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        disps.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+        intrinsics.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+        ii.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
+        jj.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
+        coords.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
+        valid.packed_accessor32<float, 4, torch::RestrictPtrTraits>()
+    );
 
     return {coords, valid};
 }
+
 
 
 std::vector<torch::Tensor> fused_projective_jac_cuda(
@@ -469,14 +473,14 @@ std::vector<torch::Tensor> fused_projective_jac_cuda(
 
     auto opts = disps.options();
     auto half_opts = opts.dtype(torch::kFloat16);
-    
+
     torch::Tensor coords = torch::zeros({E, H, W, 2}, opts);
     torch::Tensor valid = torch::zeros({E, H, W, 1}, opts);
     torch::Tensor Xj_cache = torch::zeros({E, H, W, 4}, opts);
     
-    torch::Tensor Ji = torch::zeros({E, H, W, 2, 6}, half_opts);
-    torch::Tensor Jj = torch::zeros({E, H, W, 2, 6}, half_opts);
-    torch::Tensor Jz = torch::zeros({E, H, W, 2, 1}, half_opts);
+    torch::Tensor Ji = torch::zeros({E, H, W, 2, 6}, opts);
+    torch::Tensor Jj = torch::zeros({E, H, W, 2, 6}, opts);
+    torch::Tensor Jz = torch::zeros({E, H, W, 2, 1}, opts);
 
     fused_projective_with_cache_kernel<<<E, THREADS>>>(
         t.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
@@ -496,12 +500,11 @@ std::vector<torch::Tensor> fused_projective_jac_cuda(
         intrinsics.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
         ii.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
         jj.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
-        coords.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
         valid.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
         Xj_cache.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
-        Ji.packed_accessor32<at::Half, 5, torch::RestrictPtrTraits>(),
-        Jj.packed_accessor32<at::Half, 5, torch::RestrictPtrTraits>(),
-        Jz.packed_accessor32<at::Half, 5, torch::RestrictPtrTraits>());
+        Ji.packed_accessor32<float, 5, torch::RestrictPtrTraits>(),
+        Jj.packed_accessor32<float, 5, torch::RestrictPtrTraits>(),
+        Jz.packed_accessor32<float, 5, torch::RestrictPtrTraits>());
 
     return {coords, valid, Ji, Jj, Jz};
 }
