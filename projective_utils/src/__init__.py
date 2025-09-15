@@ -15,6 +15,7 @@ from projective_ops_cuda import (
     proj_jac_cuda,
     fused_projective_cuda,
     fused_projective_jac_cuda,
+    fused_induced_flow_cuda,
 )
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     "proj_jac_cuda",
     "fused_projective_cuda",
     "fused_projective_jac_cuda",
+    "fused_induced_flow_cuda",
 ]

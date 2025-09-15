@@ -3,11 +3,10 @@ from torch.utils import cpp_extension
 
 ext_modules = [
     cpp_extension.CUDAExtension(
-        name="projective_ops_cuda",
+        name="ba_ops_cuda",
         sources=[
             "csrc/bindings.cpp",
-            "csrc/proj_ops.cu",
-            "csrc/fused_proj.cu",
+            "csrc/ba_ops.cu",
         ],
         include_dirs=[
             "csrc/",
@@ -20,7 +19,7 @@ ext_modules = [
 ]
 
 setup(
-    name="projective_utils_csrc",
+    name="ba_utils_csrc",
     ext_modules=ext_modules,
     cmdclass={"build_ext": cpp_extension.BuildExtension},
     packages=find_packages("src"),
