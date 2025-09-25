@@ -54,7 +54,7 @@ __device__ inline void relSE3(const float *ti, const float *qi, const float *tj,
 }
 
 
-__global__ void fused_projective_with_Jz_kernel(
+__global__ void fused_projective_transform_with_reduction_kernel(
     const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> t,
     const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> q,
     const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> disps,
@@ -149,27 +149,30 @@ __global__ void fused_projective_with_Jz_kernel(
 
             float Jz_temp[2];
 
+            Jz_temp[0] = (fx * (tij[0] * invz - tij[2] * Xj[0] * invz2));
             Jz_temp[1] = (fy * (tij[1] * invz - tij[2] * Xj[1] * invz2));
 
-            for(int ii = 0; ii < 2; ii++){
+
+            for(int ii = 0; ii <     2; ii++){
                 const float w = 0.001f * weight[e][i][j][ii];
-                curv[e][i*wd + j] += w * (-Jz_temp[ii]) * (-Jz_temp[ii]);
-                rhs[e][i*wd + j] -= w * r_temp[ii] * Jz_temp[ii];
+                const int iwd_j = i*wd + j;
+                curv[e][iwd_j] += w * (-Jz_temp[ii]) * (-Jz_temp[ii]);
+                rhs[e][iwd_j] -= w * r_temp[ii] * Jz_temp[ii];
             }
 
         }
     }
 }
 
-std::vector<torch::Tensor> fused_projective_transform_with_reduction_cuda(
+std::tuple<torch::Tensor, torch::Tensor> fused_projective_transform_with_reduction_cuda(
     torch::Tensor t,
     torch::Tensor q,
     torch::Tensor disps,
     torch::Tensor intrinsics,
     torch::Tensor ii,
     torch::Tensor jj,
-    torch::Tensor target,
-    torch::Tensor weight
+    torch::Tensor target, // [E, ht, wd, 2]
+    torch::Tensor weight // [E, ht, wd, 2]
 ) {
     CHECK_INPUT(t);
     CHECK_INPUT(q);
@@ -187,7 +190,7 @@ std::vector<torch::Tensor> fused_projective_transform_with_reduction_cuda(
     torch::Tensor curv = torch::zeros({E, H*W}, opts);
     torch::Tensor rhs = torch::zeros({E, H*W}, opts);
 
-    fused_projective_with_Jz_kernel<<<E, THREADS>>>(
+    fused_projective_transform_with_reduction_kernel<<<E, THREADS>>>(
         t.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
         q.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
         disps.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
@@ -201,4 +204,107 @@ std::vector<torch::Tensor> fused_projective_transform_with_reduction_cuda(
     );
 
     return {curv, rhs};
+}
+
+__global__ void fused_depth_jacobians_kernel(
+    const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> disps,
+    const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> mono_disps,
+    const torch::PackedTensorAccessor32<bool, 3, torch::RestrictPtrTraits> valid_depth,
+    const torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits> scales,
+    const torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits> shifts,
+    const torch::PackedTensorAccessor32<bool, 1, torch::RestrictPtrTraits> ignore,
+    const float sqrt_alpha, const float sqrt_alpha10,
+    torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> Jwq_out,
+    torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> Jd_out,
+    torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> Rd_out
+) {
+    const int e = blockIdx.x;
+    const int tid = threadIdx.x;
+
+    const int ht = disps.size(1);
+    const int wd = disps.size(2);
+
+    __shared__ bool is_ignored;
+    __shared__ float scale;
+    __shared__ float shift;
+
+    if (tid == 0) {
+        is_ignored = ignore[e];
+        scale = scales[e];
+        shift = shifts[e];
+    }
+    __syncthreads();
+
+    for(int k = tid; k < ht*wd; k += blockDim.x) {
+        const int i = k /wd;
+        const int j = k % wd;
+        const int iwd_j = i*wd + j;
+
+        const bool is_valid_depth = valid_depth[e][i][j];
+        
+        const float Jd = (is_valid_depth)? sqrt_alpha10 : sqrt_alpha;
+        const float mono = mono_disps[e][i][j];
+        const float disp = disps[e][i][j];
+        
+        const bool is_invalid = is_ignored || (mono < 1e-6f);
+
+        Rd_out[e][iwd_j] = sqrt_alpha * (disp - (scale*mono + shift)); // depth residual
+
+        if (is_invalid){
+            if (!is_valid_depth) {
+                Jd_out[e][iwd_j] = Jd;
+            }
+        } else{
+            Jd_out[e][iwd_j] = Jd;
+            Jwq_out[e][iwd_j][0] = -mono * Jd; // scale
+            Jwq_out[e][iwd_j][1] = -Jd; // shift
+        }
+    }
+}
+
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> fused_depth_jacobians_cuda(
+    torch::Tensor disps,// [U, ht, wd]
+    torch::Tensor mono_disps, // [U, ht, wd]
+    torch::Tensor valid_depth, // [U, ht, wd]
+    torch::Tensor scales, // [U]
+    torch::Tensor shifts, // [U]
+    torch::Tensor ignore, // [U]
+    const float alpha
+) {
+
+    CHECK_INPUT(disps);
+    CHECK_INPUT(mono_disps);
+    CHECK_INPUTB(valid_depth);
+    CHECK_INPUT(scales);
+    CHECK_INPUT(shifts);
+    CHECK_INPUTB(ignore);
+
+    const int E = disps.size(0);
+    const int ht = disps.size(1);
+    const int wd = disps.size(2);
+
+    const float sqrt_alpha = std::sqrt(alpha);
+    const float sqrt_alpha10 = sqrt_alpha*10;
+
+    auto opts = disps.options();
+
+    torch::Tensor Jd = torch::zeros({E, ht*wd}, opts);
+    torch::Tensor Rd = torch::zeros({E, ht*wd}, opts);
+    torch::Tensor Jwq = torch::zeros({E, ht*wd, 2}, opts);
+
+    fused_depth_jacobians_kernel<<<E, THREADS>>>(
+        disps.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+        mono_disps.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+        valid_depth.packed_accessor32<bool, 3, torch::RestrictPtrTraits>(),
+        scales.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+        shifts.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+        ignore.packed_accessor32<bool, 1, torch::RestrictPtrTraits>(),
+        sqrt_alpha, sqrt_alpha10,
+        Jwq.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+        Jd.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        Rd.packed_accessor32<float, 2, torch::RestrictPtrTraits>()
+    );
+
+    return {Jwq, Jd, Rd};
 }
