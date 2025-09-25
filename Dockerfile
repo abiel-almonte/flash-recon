@@ -3,7 +3,8 @@ FROM nvidia/cuda:12.8.1-devel-ubuntu24.04
 ENV TORCH_CUDA_ARCH_LIST="8.9+PTX"
 
 RUN apt update \
-&& apt install -y python3 python3-pip python-is-python3 python3-full v4l-utils wget unzip git
+&& apt install -y python3 python3-pip python-is-python3 python3-full v4l-utils wget unzip git \
+&& apt install -y libgl1 libglib2.0-0
 
 RUN python3 -m venv /opt/.venv
 ENV PATH="/opt/.venv/bin:$PATH"
@@ -11,6 +12,7 @@ ENV PATH="/opt/.venv/bin:$PATH"
 RUN pip install --upgrade pip \
 && pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128 \
 && pip install pybind11 pybind11-stubgen black \
+&& pip install opencv-python \
 && pip install --no-build-isolation git+https://github.com/princeton-vl/lietorch.git \
 && pip install --no-build-isolation torch-scatter
 

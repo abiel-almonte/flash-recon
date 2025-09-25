@@ -16,6 +16,7 @@ from new import projective_transform as projective_transform_new
 
 from pose_utils import Pose, Intrinsics, matrix_to_quat_cuda
 
+
 def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cuda"):
     torch.manual_seed(seed)
     device = torch.device(device)
@@ -59,22 +60,27 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
 
         start = time.perf_counter()
         for _ in range(iters):
-            old_coords, old_valid, (old_Ji, old_Jj, old_Jz) = projective_transform_old(poses_b, disps_b, intr_b, ii, jj, jacobian=True)
+            old_coords, old_valid, (old_Ji, old_Jj, old_Jz) = projective_transform_old(
+                poses_b, disps_b, intr_b, ii, jj, jacobian=True
+            )
             torch.cuda.synchronize()
         old_latency = (time.perf_counter() - start) * 1000.0 / iters
-    
 
     with torch.inference_mode():
         for _ in range(10):
-            projective_transform_new(poses_cuda, disps, intrinsics_tuple, ii, jj, jacobian=True)
+            projective_transform_new(
+                poses_cuda, disps, intrinsics_tuple, ii, jj, jacobian=True
+            )
         torch.cuda.synchronize()
 
         start = time.perf_counter()
         for _ in range(iters):
-            new_coords, new_valid, new_Ji, new_Jj, new_Jz = projective_transform_new(poses_cuda, disps, intrinsics_tuple, ii, jj, jacobian=True)
+            new_coords, new_valid, new_Ji, new_Jj, new_Jz = projective_transform_new(
+                poses_cuda, disps, intrinsics_tuple, ii, jj, jacobian=True
+            )
             torch.cuda.synchronize()
         new_latency = (time.perf_counter() - start) * 1000.0 / iters
-    
+
     old_coords = old_coords.squeeze(0)
     old_valid = old_valid.squeeze(0)
     old_Ji = old_Ji.squeeze(0)
@@ -90,10 +96,10 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
         jj_max_diff = (old_Jj - new_Jj).abs().max().item()
         jz_max_diff = (old_Jz - new_Jz).abs().max().item()
     else:
-        coords_max_diff = float('nan')
-        ji_max_diff = float('nan')
-        jj_max_diff = float('nan')
-        jz_max_diff = float('nan')
+        coords_max_diff = float("nan")
+        ji_max_diff = float("nan")
+        jj_max_diff = float("nan")
+        jz_max_diff = float("nan")
 
     stats = {
         "Coords Max Diff": coords_max_diff,
@@ -101,15 +107,17 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
         "Ji Max Diff": ji_max_diff,
         "Jj Max Diff": jj_max_diff,
         "Jz Max Diff": jz_max_diff,
-        "Old Latency (ms)": old_latency ,
+        "Old Latency (ms)": old_latency,
         "New Latency (ms)": new_latency,
-        "Speedup x": old_latency/new_latency,
+        "Speedup x": old_latency / new_latency,
     }
 
     return stats
 
+
 if __name__ == "__main__":
     import pprint
+
     cases = [
         # Quick sanity
         dict(T=3, H=32, W=32, motion_scale=0.05, iters=200, seed=1),
@@ -137,5 +145,3 @@ if __name__ == "__main__":
         print("  Stats:")
         pprint.pprint(stats, indent=4, sort_dicts=False)
         print()
-
-

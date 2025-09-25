@@ -1,7 +1,9 @@
 """
 Original MonoGS pose utility functions
 """
+
 import torch
+
 
 def skew_sym_mat(x):
     device = x.device
@@ -14,6 +16,7 @@ def skew_sym_mat(x):
     ssm[2, 0] = -x[1]
     ssm[2, 1] = x[0]
     return ssm
+
 
 def SO3_exp(theta):
     device = theta.device
@@ -30,6 +33,7 @@ def SO3_exp(theta):
             + (torch.sin(angle) / angle) * W
             + ((1 - torch.cos(angle)) / (angle**2)) * W2
         )
+
 
 def V(theta):
     dtype = theta.dtype
@@ -48,6 +52,7 @@ def V(theta):
         )
     return V
 
+
 def SE3_exp(tau):
     dtype = tau.dtype
     device = tau.device
@@ -59,6 +64,7 @@ def SE3_exp(tau):
     T[:3, :3] = R
     T[:3, 3] = t
     return T
+
 
 def update_pose(camera, converged_threshold=1e-4):
     tau = torch.cat([camera.cam_trans_delta, camera.cam_rot_delta], axis=0)

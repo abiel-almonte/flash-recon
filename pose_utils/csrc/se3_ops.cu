@@ -310,7 +310,7 @@ __global__ void se3_adjointT_kernel(const float* t, const float* q, const float*
     const float RT21 = 2.f * (yz - wx);
     const float RT22 = 1.f - 2.f * (xx + yy);
 
-    // Index into jac: [B,S,2,6]
+    // Index into jac: [B,S,2,6] ///FIX FIX FIX FIX FIX swap the rho for the phi. rho should be const
     const int base = ((b * S + s) * 2 + r) * 6;
     float rho0 = jac[base + 0];
     float rho1 = jac[base + 1];
