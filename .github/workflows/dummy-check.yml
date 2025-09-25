@@ -1,0 +1,11 @@
+name: Dummy Check
+
+on:
+  pull_request:
+
+jobs:
+  always-pass:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Always succeed
+        run: echo "This check always passes"
