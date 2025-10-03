@@ -17,10 +17,10 @@ def projective_transform_with_reduction_fused(
     target: torch.Tensor,
     weight: torch.Tensor,
 ):
-    curv, rhs = fused_projective_transform_with_reduction_cuda(
+    Ck, wk = fused_projective_transform_with_reduction_cuda(
         poses.t, poses.q, depths, intrinsics.as_tensor, ii, jj, target, weight
     )
-    return curv, rhs
+    return Ck, wk
 
 
 def projective_jacobians(
