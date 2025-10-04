@@ -22,20 +22,6 @@ def projective_transform_with_reduction_fused(
     return Ck, wk
 
 
-def projective_jacobians(
-    poses: Pose,
-    depths: torch.Tensor,
-    intrinsics: Intrinsics,
-    ii: torch.Tensor,
-    jj: torch.Tensor,
-    target: torch.Tensor,
-    weight: torch.Tensor,
-):
-    return projective_transform_with_reduction_fused(
-        poses, depths, intrinsics, ii, jj, target, weight
-    )
-
-
 def depth_jacobians_fused(
     disps: torch.Tensor,
     mono: torch.Tensor,
@@ -49,6 +35,20 @@ def depth_jacobians_fused(
         disps, mono, depth_mask, scales, shifts, ignore, alpha
     )
     return Jwq, Jd, Rd
+
+
+def projective_jacobians(
+    poses: Pose,
+    depths: torch.Tensor,
+    intrinsics: Intrinsics,
+    ii: torch.Tensor,
+    jj: torch.Tensor,
+    target: torch.Tensor,
+    weight: torch.Tensor,
+):
+    return projective_transform_with_reduction_fused(
+        poses, depths, intrinsics, ii, jj, target, weight
+    )
 
 
 def depth_jacobians(
@@ -174,24 +174,24 @@ def schur_solve(
 
 
 def ba_ss(
-    target: torch.Tensor,  # [E, ht, wd, 2]
-    weight: torch.Tensor,  # [E, ht, wd, 2]
-    eta: torch.Tensor,  # [E, ht, wd]
-    poses: Pose,  # q : [E, 4], t: [E, 3]
-    disps: torch.Tensor,  # [E, ht, wd]
-    intrinsics: Intrinsics,  # [4]
-    ii: torch.Tensor,  # [E]
-    jj: torch.Tensor,  # [E]
-    mono_disps: torch.Tensor,  # [E, ht, wd]
-    scales: torch.Tensor,  # [E]
-    shifts: torch.Tensor,  # [E]
-    valid_depth_mask: torch.Tensor,  # [E, ht, wd]
+    target: torch.Tensor,  # [E, ht, wd, 2] - target optical flow per edge
+    weight: torch.Tensor,  # [E, ht, wd, 2] - confidence weights per edge
+    damping: torch.Tensor,  # [T, ht, wd] - regularization per frame
+    poses: Pose,  # [T] - camera poses (q: [T, 4], t: [T, 3])
+    disps: torch.Tensor,  # [T, ht, wd] - disparity maps per frame
+    intrinsics: Intrinsics,  # camera intrinsics (fx, fy, cx, cy)
+    ii: torch.Tensor,  # [E] - source frame indices for each edge
+    jj: torch.Tensor,  # [E] - destination frame indices for each edge
+    mono_disps: torch.Tensor,  # [T, ht, wd] - monocular depth predictions
+    scales: torch.Tensor,  # [T] - scale parameters for depth alignment
+    shifts: torch.Tensor,  # [T] - shift parameters for depth alignment
+    valid_depth_mask: torch.Tensor,  # [T, ht, wd] - valid depth mask per frame
     ignore_frames: int = 0,
-    lm=0.0001,
-    ep=0.1,
-    alpha=1.0,
-    fixedp=1,
-    rig=1,
+    lm: float = 0.0001,  # Levenberg-Marquardt damping
+    ep: float = 0.1,  # epsilon for numerical stability
+    alpha: float = 1.0,  # weight for depth regularization
+    fixedp: int = 1,  # number of fixed poses (for rig constraint)
+    rig: int = 1,  # rig size (for multi-camera systems)
 ):
     """Bundle adjustment with scale and shift optimization.
 
@@ -201,23 +201,23 @@ def ba_ss(
     _, ht, wd = disps.shape
 
     # Get unique keyframes and create index mappings
-    kx, kk = torch.unique(ii, return_inverse=True)
-    eta = 0.2 * eta[kx].contiguous() + 1e-7
+    keyframe_indices, edge_to_keyframe = torch.unique(ii, return_inverse=True)
+    damping_keyframes = 0.2 * damping[keyframe_indices].contiguous() + 1e-7
 
-    # Prepare scale/shift parameters and monocular depth
-    wqs = torch.stack([scales, shifts], dim=-1)  # [E,2]
+    # Prepare scale/shift parameters
+    scale_shift_params = torch.stack([scales, shifts], dim=-1)  # [T, 2]
 
     # ========== PROJECTIVE JACOBIANS ==========
     proj_depth_diag, proj_depth_residual = projective_jacobians(
         poses, disps, intrinsics, ii, jj, target, weight
     )
+    # Ck [E, hw]
+    # wk [E, hw]
 
     # Normalize indices for rig/fixedp consistency (for pose optimization, though not used here)
     # Note: In the original BA, this would affect pose updates, but we only optimize depth/scale/shift
     ii = torch.div(ii, rig, rounding_mode="trunc") - fixedp
     jj = torch.div(jj, rig, rounding_mode="trunc") - fixedp
-    # Ck [E, hw]
-    # wk [E, hw]
 
     # ========== DEPTH JACOBIANS ==========
     scale_shift_jac, depth_jac, depth_residual = depth_jacobians(
@@ -228,7 +228,7 @@ def ba_ss(
         valid_depth_mask,
         ignore_frames,
         alpha,
-        indices=kx,
+        indices=keyframe_indices,
     )
     # Jwq [M, hw, 2]
     # Jd [M, hw]
@@ -242,8 +242,8 @@ def ba_ss(
             depth_residual,
             proj_depth_diag,
             proj_depth_residual,
-            eta,
-            kk,
+            damping_keyframes,
+            edge_to_keyframe,
         )
     )
     # H [M, M, 2, 2]
@@ -253,16 +253,16 @@ def ba_ss(
     # w [M, hw]
 
     # ========== SOLVE LINEAR SYSTEM ==========
-    dwq, dz = schur_solve(
+    delta_scale_shift, delta_depth = schur_solve(
         scale_shift_hessian, cross_term, depth_diag, scale_shift_rhs, depth_rhs, ep, lm
     )
     # dwq [M, 2]
     # dz [M, hw]
 
     # ========== APPLY UPDATES ==========
-    disps_out = disps.index_add(0, kx, dz.view(-1, ht, wd))
+    disps_out = disps.index_add(0, keyframe_indices, delta_depth.view(-1, ht, wd))
     disps_out.clamp_(min=0.0)
 
-    wqs.index_add_(0, kx, dwq)
+    scale_shift_params.index_add_(0, keyframe_indices, delta_scale_shift)
 
-    return disps_out, wqs
+    return disps_out, scale_shift_params
