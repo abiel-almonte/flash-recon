@@ -6,7 +6,6 @@ import time
 import torch
 import lietorch
 
-# Make both workspace roots importable (common in dev containers vs local)
 for p in ["/workspace", "/workspace/Splat-SLAM"]:
     if p not in sys.path:
         sys.path.append(p)
@@ -54,7 +53,7 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
     intrinsics_tuple = Intrinsics(fx, fy, cx, cy)
 
     with torch.inference_mode():
-        for _ in range(10):
+        for _ in range(50):
             projective_transform_old(poses_b, disps_b, intr_b, ii, jj, jacobian=True)
         torch.cuda.synchronize()
 
@@ -67,7 +66,7 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
         old_latency = (time.perf_counter() - start) * 1000.0 / iters
 
     with torch.inference_mode():
-        for _ in range(10):
+        for _ in range(50):
             projective_transform_new(
                 poses_cuda, disps, intrinsics_tuple, ii, jj, jacobian=True
             )
@@ -120,15 +119,15 @@ if __name__ == "__main__":
 
     cases = [
         # Quick sanity
-        dict(T=3, H=32, W=32, motion_scale=0.05, iters=200, seed=1),
+        dict(T=3, H=32, W=32, motion_scale=0.05, iters=1000, seed=1),
         # Typical
-        dict(T=4, H=64, W=64, motion_scale=0.05, iters=200, seed=123),
+        dict(T=4, H=64, W=64, motion_scale=0.05, iters=1000, seed=123),
         # Low motion
-        dict(T=5, H=64, W=64, motion_scale=0.01, iters=200, seed=2),
+        dict(T=5, H=64, W=64, motion_scale=0.01, iters=1000, seed=2),
         # High motion
-        dict(T=5, H=64, W=64, motion_scale=0.2, iters=200, seed=3),
+        dict(T=5, H=64, W=64, motion_scale=0.2, iters=1000, seed=3),
         # Minimal edges
-        dict(T=2, H=64, W=64, motion_scale=0.1, iters=200, seed=4),
+        dict(T=2, H=64, W=64, motion_scale=0.1, iters=1000, seed=4),
         # Larger res
         dict(T=5, H=128, W=128, motion_scale=0.1, iters=100, seed=5),
         # Wide aspect
