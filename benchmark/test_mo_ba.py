@@ -10,33 +10,12 @@ for p in ["/workspace", "/workspace/Splat-SLAM"]:
     if p not in sys.path:
         sys.path.append(p)
 
-from originals import BA_with_scale_shift as ba_ss_old
-from new import ba_scale_shift as ba_ss_new
+from originals import MoBA as mo_ba_old
+from new import motion_only_ba as mo_ba_new
 
 from pose_utils import Pose, Intrinsics, matrix_to_quat_cuda
 
-"""
-def bass(
-    target: torch.Tensor, # [E, ht, wd, 2]
-    weight: torch.Tensor, # [E, ht, wd, 2]
-    eta : torch.Tensor, 
-    poses: Pose, # q : [E, 4], t: [E, 3]
-    disps: torch.Tensor, # [E, ht, wd]
-    intrinsics: Intrinsics, # [4]
-    ii: torch.Tensor, # [E]
-    jj: torch.Tensor, # [E]
-    mono_disps: torch.Tensor, # [E, ht, wd]
-    scales: torch.Tensor, # [E]
-    shifts: torch.Tensor, # [E]
-    valid_depth_mask: torch.Tensor, # [E, ht, wd]
-    ignore_frames: int,
-    lm=0.0001,
-    ep=0.1,
-    alpha=1.0,
-    fixedp=1,
-    rig=1,
-):
-"""
+
 def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cuda"):
     torch.manual_seed(seed)
     device = torch.device(device)
@@ -57,10 +36,6 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
     weight = torch.rand(E, H, W, 2, device=device, dtype=dtype)
     eta = torch.rand(T, H, W, device=device, dtype=dtype)
     disps = torch.rand(T, H, W, device=device, dtype=dtype).clamp_min(1e-4)
-    mono_disps = torch.rand(T, H, W, device=device, dtype=dtype).clamp_min(1e-4)
-    scales = torch.rand(T, device=device, dtype=dtype)
-    shifts = torch.rand(T, device=device, dtype=dtype)
-    valid_depth_mask = torch.randint(0, 1, (T, H, W), device=device, dtype=torch.bool)
 
     fx = 300.0
     fy = 300.0
@@ -78,10 +53,6 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
     poses_b = lietorch.SE3(poses_vec[None])
     disps_b = disps[None]
     intr_b = intrinsics_1d.view(1, 1, 4).repeat(1, T, 1)
-    mono_disps_b = mono_disps[None]
-    scales_b = scales[None]
-    shifts_b = shifts[None]
-    valid_depth_mask_b = valid_depth_mask[None]
 
     # Edges
     if T < 2:
@@ -96,45 +67,47 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
     q = matrix_to_quat_cuda(R)
     poses_cuda = Pose(t, q)
     intrinsics= Intrinsics(fx, fy, cx, cy)
+    
 
+    
     with torch.inference_mode():
         for _ in range(50):
             eta_b = .2 * eta[torch.unique(ii)].contiguous()[None] + 1e-7
-            ba_ss_old(target_b, weight_b, eta_b, poses_b, disps_b, intr_b, ii, jj, mono_disps_b, scales_b, shifts_b, valid_depth_mask_b)
+            _ = mo_ba_old(target_b, weight_b, eta_b, poses_b, disps_b, intr_b, ii, jj)
         torch.cuda.synchronize()
 
         start = time.perf_counter()
         for _ in range(iters):
             eta_b = .2 * eta[torch.unique(ii)][None].contiguous() + 1e-7
-            _, old_updated_disps, old_wqs = ba_ss_old(target_b, weight_b, eta_b, poses_b, disps_b, intr_b, ii, jj, mono_disps_b, scales_b, shifts_b, valid_depth_mask_b)
+            old_updated_poses = mo_ba_old(target_b, weight_b, eta_b, poses_b, disps_b, intr_b, ii, jj)
             torch.cuda.synchronize()
         old_latency = (time.perf_counter() - start) * 1000.0 / iters
 
     with torch.inference_mode():
         for _ in range(50):
-            new_updated_disps, new_wqs = ba_ss_new(target, weight, eta, poses_cuda, disps, intrinsics, ii, jj, mono_disps, scales, shifts, valid_depth_mask)
+            _ = mo_ba_new(target, weight, poses_cuda, disps, intrinsics, ii, jj)
         torch.cuda.synchronize()
 
         start = time.perf_counter()
         for _ in range(iters):
-            new_updated_disps, new_wqs = ba_ss_new(target, weight, eta, poses_cuda, disps, intrinsics, ii, jj, mono_disps, scales, shifts, valid_depth_mask)
+            new_updated_poses = mo_ba_new(target, weight, poses_cuda, disps, intrinsics, ii, jj)
             torch.cuda.synchronize()
         new_latency = (time.perf_counter() - start) * 1000.0 / iters
 
-    old_updated_disps = old_updated_disps.squeeze(0)
-    old_wqs = old_wqs.squeeze(0)
-
-    old_updated_disps_max_diff = (old_updated_disps - new_updated_disps).abs().max().item()
-    old_wqs_max_dif = (old_wqs - new_wqs).abs().max().item()
+    old_vec = old_updated_poses.vec()[0]  # Remove batch dimension [N, 7]
+    new_vec = torch.cat([new_updated_poses.t, new_updated_poses.q], dim=-1)  # [N, 7]
+    
+    updated_poses_max_diff = (old_vec - new_vec).abs().max().item()
+    speedup = old_latency / new_latency
+    
 
     stats = {
-        "Optimized Disps Max Diff": old_updated_disps_max_diff,
-        "WQS Max Diff": old_wqs_max_dif,
+        "Updated Poses Diff": updated_poses_max_diff,
         "Old Latency (ms)": old_latency,
         "New Latency (ms)": new_latency,
-        "Speedup x": old_latency / new_latency,
+        "Speedup": speedup,
     }
-
+    
     return stats
 
 

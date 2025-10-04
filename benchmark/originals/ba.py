@@ -201,3 +201,55 @@ def BA_with_scale_shift(target, weight, eta, poses, disps, intrinsics, ii, jj,
     disps = disps.clamp(min=0.0)
 
     return poses, disps , wqs
+
+
+def MoBA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
+    """ Motion only bundle adjustment """
+
+    B, P, ht, wd = disps.shape
+    N = ii.shape[0]
+    D = poses.manifold_dim
+
+    ### 1: commpute jacobians and residuals ###
+    coords, valid, (Ji, Jj, Jz) = projective_transform(
+        poses, disps, intrinsics, ii, jj, jacobian=True)
+
+    r = (target - coords).view(B, N, -1, 1)
+    w = .001 * (valid * weight).view(B, N, -1, 1)
+
+    ### 2: construct linear system ###
+    Ji = Ji.reshape(B, N, -1, D)
+    Jj = Jj.reshape(B, N, -1, D)
+    wJiT = (w * Ji).transpose(2,3)
+    wJjT = (w * Jj).transpose(2,3)
+
+    Hii = torch.matmul(wJiT, Ji)
+    Hij = torch.matmul(wJiT, Jj)
+    Hji = torch.matmul(wJjT, Ji)
+    Hjj = torch.matmul(wJjT, Jj)
+
+    vi = torch.matmul(wJiT, r).squeeze(-1)
+    vj = torch.matmul(wJjT, r).squeeze(-1)
+
+    # only optimize keyframe poses
+    P = P // rig - fixedp
+    ii = ii // rig - fixedp
+    jj = jj // rig - fixedp
+
+    H = safe_scatter_add_mat(Hii, ii, ii, P, P) + \
+        safe_scatter_add_mat(Hij, ii, jj, P, P) + \
+        safe_scatter_add_mat(Hji, jj, ii, P, P) + \
+        safe_scatter_add_mat(Hjj, jj, jj, P, P)
+
+    v = safe_scatter_add_vec(vi, ii, P) + \
+        safe_scatter_add_vec(vj, jj, P)
+    
+    H = H.view(B, P, P, D, D)
+
+    ### 3: solve the system ###
+    dx = block_solve(H, v)
+
+    ### 4: apply retraction ###
+    poses = pose_retr(poses, dx, torch.arange(P) + fixedp)
+    return poses
+
