@@ -1,5 +1,5 @@
 """
-Original glorie-slam projective operations (exact copy)
+Original glorie-slam projective operations
 """
 
 import torch
