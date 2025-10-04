@@ -214,8 +214,12 @@ def points_to_pose_jacobian(points: torch.Tensor) -> torch.Tensor:
 
 
 def pose_retraction(pose: Pose, tangent: Tangent) -> Pose:
-    other = tangent_to_pose(tangent)
-    return pose_mul(pose, other)
+    """
+    Retraction: Exp(tangent) * pose (LEFT multiplication)
+    Matches lietorch's SE3.retr() convention.
+    """
+    delta_pose = tangent_to_pose(tangent)
+    return pose_mul(delta_pose, pose)
 
 
 def pose_adjointT(pose: Pose, jac: torch.Tensor) -> torch.Tensor:
