@@ -164,47 +164,6 @@ __global__ void fused_projective_transform_with_reduction_kernel(
     }
 }
 
-std::tuple<torch::Tensor, torch::Tensor> fused_projective_transform_with_reduction_cuda(
-    torch::Tensor t,
-    torch::Tensor q,
-    torch::Tensor disps,
-    torch::Tensor intrinsics,
-    torch::Tensor ii,
-    torch::Tensor jj,
-    torch::Tensor target, // [E, ht, wd, 2]
-    torch::Tensor weight // [E, ht, wd, 2]
-) {
-    CHECK_INPUT(t);
-    CHECK_INPUT(q);
-    CHECK_INPUT(disps);
-    CHECK_INPUT(intrinsics);
-    CHECK_INPUTL(ii);
-    CHECK_INPUTL(jj);
-
-    const int E = ii.size(0);
-    const int H = disps.size(1);
-    const int W = disps.size(2);
-
-    auto opts = disps.options();
-
-    torch::Tensor curv = torch::zeros({E, H*W}, opts);
-    torch::Tensor rhs = torch::zeros({E, H*W}, opts);
-
-    fused_projective_transform_with_reduction_kernel<<<E, THREADS>>>(
-        t.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
-        q.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
-        disps.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
-        intrinsics.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
-        ii.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
-        jj.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
-        target.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
-        weight.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
-        curv.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
-        rhs.packed_accessor32<float, 2, torch::RestrictPtrTraits>()
-    );
-
-    return {curv, rhs};
-}
 
 __global__ void fused_depth_jacobians_kernel(
     const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> disps,
@@ -262,6 +221,47 @@ __global__ void fused_depth_jacobians_kernel(
     }
 }
 
+std::tuple<torch::Tensor, torch::Tensor> fused_projective_transform_with_reduction_cuda(
+    torch::Tensor t, // [E, 3]
+    torch::Tensor q, // [E, 4]
+    torch::Tensor disps, // [E, ht, wd]
+    torch::Tensor intrinsics,
+    torch::Tensor ii, // [E]
+    torch::Tensor jj, // [E]
+    torch::Tensor target, // [E, ht, wd, 2]
+    torch::Tensor weight // [E, ht, wd, 2]
+) {
+    CHECK_INPUT(t);
+    CHECK_INPUT(q);
+    CHECK_INPUT(disps);
+    CHECK_INPUT(intrinsics);
+    CHECK_INPUTL(ii);
+    CHECK_INPUTL(jj);
+
+    const int E = ii.size(0);
+    const int H = disps.size(1);
+    const int W = disps.size(2);
+
+    auto opts = disps.options();
+
+    torch::Tensor curv = torch::zeros({E, H*W}, opts);
+    torch::Tensor rhs = torch::zeros({E, H*W}, opts);
+
+    fused_projective_transform_with_reduction_kernel<<<E, THREADS>>>(
+        t.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        q.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        disps.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+        intrinsics.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+        ii.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
+        jj.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
+        target.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
+        weight.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
+        curv.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        rhs.packed_accessor32<float, 2, torch::RestrictPtrTraits>()
+    );
+
+    return {curv, rhs};
+}
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> fused_depth_jacobians_cuda(
     torch::Tensor disps,// [U, ht, wd]
