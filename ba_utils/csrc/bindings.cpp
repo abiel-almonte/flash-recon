@@ -12,6 +12,6 @@ PYBIND11_MODULE(ba_ops_cuda, m) {
          "Fused projective transform with reduction (iproj+SE3+proj)");
         
     m.def("fused_depth_jacobians_cuda", &fused_depth_jacobians_cuda, 
-        py::arg("disps"), py::arg("mono_disps"), py::arg("scales"), py::arg("shifts"), py::arg("ignore"), py::arg("alpha"),
+        py::arg("disps"), py::arg("mono_disps"), py::arg("valid_depth"), py::arg("scales"), py::arg("shifts"), py::arg("ignore"), py::arg("alpha"),
          "Fused operation to compute depth jacobians");
 }   
