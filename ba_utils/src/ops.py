@@ -190,8 +190,6 @@ def ba_ss(
     lm: float = 0.0001,  # Levenberg-Marquardt damping
     ep: float = 0.1,  # epsilon for numerical stability
     alpha: float = 1.0,  # weight for depth regularization
-    fixedp: int = 1,  # number of fixed poses (for rig constraint)
-    rig: int = 1,  # rig size (for multi-camera systems)
 ):
     """Bundle adjustment with scale and shift optimization.
 
@@ -213,11 +211,6 @@ def ba_ss(
     )
     # Ck [E, hw]
     # wk [E, hw]
-
-    # Normalize indices for rig/fixedp consistency (for pose optimization, though not used here)
-    # Note: In the original BA, this would affect pose updates, but we only optimize depth/scale/shift
-    ii = torch.div(ii, rig, rounding_mode="trunc") - fixedp
-    jj = torch.div(jj, rig, rounding_mode="trunc") - fixedp
 
     # ========== DEPTH JACOBIANS ==========
     scale_shift_jac, depth_jac, depth_residual = depth_jacobians(
