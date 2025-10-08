@@ -253,3 +253,92 @@ def MoBA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1)
     poses = pose_retr(poses, dx, torch.arange(P) + fixedp)
     return poses
 
+@torch.no_grad()
+def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, 
+       sensor_disps=None, lm=0.0001, ep=0.1, alpha=0.05, fixedp=1, rig=1):
+    """ Full Bundle Adjustment """
+
+    B, P, ht, wd = disps.shape
+    N = ii.shape[0]
+    D = poses.manifold_dim
+    ### 1: commpute jacobians and residuals ###
+    coords, valid, (Ji, Jj, Jz) = projective_transform(
+        poses, disps, intrinsics, ii, jj, jacobian=True)
+
+    r = (target - coords).view(B, N, -1, 1) #[B,N,2*ht*wd,D]
+    w = .001 * (valid * weight).view(B, N, -1, 1) #[B,N,2*ht*wd,D]
+
+
+    ### 2: construct linear system ###
+    Ji = Ji.reshape(B, N, -1, D)        #[B,N,2*ht*wd,D]
+    Jj = Jj.reshape(B, N, -1, D)        #[B,N,2*ht*wd,D]
+    wJiT = (w * Ji).transpose(2,3)      #[B,N,D,2*ht*wd]
+    wJjT = (w * Jj).transpose(2,3)      #[B,N,D,2*ht*wd]
+
+    Jz = Jz.reshape(B, N, ht*wd, -1)    #[B,N,ht*wd,2]
+
+    Hii = torch.matmul(wJiT, Ji)        #[B,N,D,D]
+    Hij = torch.matmul(wJiT, Jj)        #[B,N,D,D]
+    Hji = torch.matmul(wJjT, Ji)        #[B,N,D,D]
+    Hjj = torch.matmul(wJjT, Jj)        #[B,N,D,D]
+ 
+    vi = torch.matmul(wJiT, r).squeeze(-1) #[B,N,D]
+    vj = torch.matmul(wJjT, r).squeeze(-1) #[B,N,D]
+
+    Ei = (wJiT.view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1) #[B,N,D,ht*wd]
+    Ej = (wJjT.view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1) #[B,N,D,ht*wd]
+
+    w = w.view(B, N, ht*wd, -1) #[B,N,ht*wd,2]
+    r = r.view(B, N, ht*wd, -1) #[B,N,ht*wd,2]
+    wk = torch.sum(w*r*Jz, dim=-1) #[B,N,ht*wd]
+    Ck = torch.sum(w*Jz*Jz, dim=-1) #[B,N,ht*wd]
+
+
+    kx, kk = torch.unique(ii, return_inverse=True)
+    M = kx.shape[0]
+
+    # only optimize keyframe poses
+    P = torch.div(P,rig,rounding_mode="trunc")-fixedp
+    ii = torch.div(ii,rig,rounding_mode="trunc")-fixedp
+    jj = torch.div(jj,rig,rounding_mode="trunc")-fixedp
+
+    H = safe_scatter_add_mat(Hii, ii, ii, P, P) + \
+        safe_scatter_add_mat(Hij, ii, jj, P, P) + \
+        safe_scatter_add_mat(Hji, jj, ii, P, P) + \
+        safe_scatter_add_mat(Hjj, jj, jj, P, P)            #[B,P*P,D,D]
+
+    E = safe_scatter_add_mat(Ei, ii, kk, P, M) + \
+        safe_scatter_add_mat(Ej, jj, kk, P, M)             #[B,P*M,D,ht*wd]
+
+    v = safe_scatter_add_vec(vi, ii, P) + \
+        safe_scatter_add_vec(vj, jj, P)                    #[B,P,D]
+
+    C = safe_scatter_add_vec(Ck, kk, M)                    #[B,M,ht*wd]
+
+    # C = C + eta.view(*C.shape) #+ 1e-7
+
+    w = safe_scatter_add_vec(wk, kk, M)  #[B,M,ht*wd]
+    if sensor_disps is None:
+        C = C + eta.view(*C.shape) #+ 1e-7
+    else:
+        m = (sensor_disps[:,kx]>0).float().view(B,M,ht*wd)     #[B,M,ht*wd]
+        C = C + m*alpha + (1-m)*eta.view(*C.shape)             #[B,M,ht*wd]
+        w = w - m*alpha*(disps[:,kx]-sensor_disps[:,kx]).view(B,M,ht*wd)  #[B,M,ht*wd]
+
+
+    H = H.view(B, P, P, D, D)
+    E = E.view(B, P, M, D, ht*wd)
+
+    ### 3: solve the system ###
+    dx, dz = schur_solve(H, E, C, v, w, ep, lm)
+    # dx [B,P,D]
+    # dz [B,M,ht*wd]
+
+    ### 4: apply retraction ###
+    poses = pose_retr(poses, dx, torch.arange(P) + fixedp)
+    disps = disp_retr(disps, dz.view(B,-1,ht,wd), kx)
+
+    # disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
+    disps = disps.clamp(min=0.0)
+
+    return poses, disps
