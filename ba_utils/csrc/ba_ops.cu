@@ -308,3 +308,278 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> fused_depth_jacobians_cu
 
     return {Jwq, Jd, Rd};
 }
+
+__device__ inline void neg_adjointT(const float* rotT, const float* t, const float* Jj, float* Ji_out) { 
+    const float tx = t[0];
+    const float ty = t[1];
+    const float tz = t[2];  
+        
+    for (int i = 0; i < 2; i++){
+        const int i6 = i*6;
+
+        const float rho0 = Jj[i6 + 0];
+        const float rho1 = Jj[i6 + 1];
+        const float rho2 = Jj[i6 + 2];
+
+        // phi - (t x rho)
+        const float phi0 = Jj[i6 + 3] - (ty * rho2 - tz * rho1);
+        const float phi1 = Jj[i6 + 4] - (tz * rho0 - tx * rho2);
+        const float phi2 = Jj[i6 + 5] - (tx * rho1 - ty * rho0);
+        
+        // R^T * rho and R^T * phi
+        for (int j = 0; j < 3; j++) {
+            const int j3 = j*3;
+            Ji_out[i6 + j] = -(rotT[j3 + 0]*rho0 + rotT[j3 + 1]*rho1 + rotT[j3 + 2]*rho2);
+            Ji_out[i6 + j + 3] = -(rotT[j3 + 0]*phi0 + rotT[j3 + 1]*phi1 + rotT[j3 + 2]*phi2);
+        }
+    }
+}
+
+template<typename T, int N>
+using PackedTensor = typename torch::PackedTensorAccessor32<T, N, torch::RestrictPtrTraits>;
+
+template<bool ret_cross12>
+__global__ void fused_project_and_accumulate_kernel(
+    const PackedTensor<float, 2> t,
+    const PackedTensor<float, 2> q,
+    const PackedTensor<float, 3> disps,
+    const PackedTensor<float, 1> intr,
+    const PackedTensor<long, 1> ii,
+    const PackedTensor<long, 1> jj,
+    const PackedTensor<float, 3> target,
+    const PackedTensor<float, 3> weight,
+    PackedTensor<float, 3> Hii_out,
+    PackedTensor<float, 3> Hij_out,
+    PackedTensor<float, 3> Hji_out,
+    PackedTensor<float, 3> Hjj_out,
+    PackedTensor<float, 2> vi_out,
+    PackedTensor<float, 2> vj_out,
+    PackedTensor<float, 3> Ei_out,
+    PackedTensor<float, 3> Ej_out,
+    PackedTensor<float, 2> depth_diag_out,
+    PackedTensor<float, 2> depth_residual_out
+){
+    const int e = blockIdx.x;
+    const int tid = threadIdx.x;
+
+    const int ht = disps.size(1);
+    const int wd = disps.size(2);
+
+    __shared__ int ix;
+    __shared__ int jx;
+    __shared__ float fx, fy, cx, cy;
+    __shared__ float ti[3], tj[3], tij[3];
+    __shared__ float qi[4], qj[4], qij[4];
+
+    if (tid == 0) {
+        ix = static_cast<int>(ii[e]);
+        jx = static_cast<int>(jj[e]);
+        fx = intr[0];
+        fy = intr[1];
+        cx = intr[2];
+        cy = intr[3];
+
+        for (int k = 0; k < 3; k++) {
+            ti[k] = t[ix][k];
+            tj[k] = t[jx][k];
+        }
+
+        for (int k = 0; k < 4; k++) {
+            qi[k] = q[ix][k];
+            qj[k] = q[jx][k];
+        }
+
+        relSE3(ti, qi, tj, qj, tij, qij);
+        if (ix == jx) {
+            tij[0] = -0.1f;
+            tij[1] = 0.0f;
+            tij[2] = 0.0f;
+
+            qij[0] = 0.0f;
+            qij[1] = 0.0f;
+            qij[2] = 0.0f;
+            qij[3] = 1.0f;
+        }
+    }
+
+    __syncthreads();
+
+    float Hii_temp[6][6];
+    float Hij_temp[6][6];
+    float Hji_temp[6][6];
+    float Hjj_temp[6][6];
+    float vi_temp[6];
+    float vj_temp[6];
+
+
+    for (int k = tid; k < ht * wd; k += blockDim.x) {
+        const int i = k / wd;
+        const int j = k % wd;
+        const int ij = i*j;
+        const float u = static_cast<float>(j);
+        const float v = static_cast<float>(i);
+
+        float Xi[4];
+        Xi[0] = (u - cx) / fx;
+        Xi[1] = (v - cy) / fy;
+        Xi[2] = 1.0f;
+        Xi[3] = disps[ix][i][j];
+
+        float Xj[4];
+        actSE3(tij, qij, Xi, Xj);
+
+        float coords_temp[2];
+        float r_temp[2];
+        float w_temp[2];
+        float Ji_temp[12];
+        float Jj_temp[12];
+
+        if (Xj[2] > 0.01f) {
+            const float invz = 1.0f / Xj[2];
+            coords_temp[0] = fx * (Xj[0] * invz) + cx;
+            coords_temp[1] = fy * (Xj[1] * invz) + cy;
+
+        } else {
+            coords_temp[0] = u;
+            coords_temp[1] = v; 
+        }
+
+        r_temp[0] = target[e][i][j][0] - coords_temp[0];
+        r_temp[1] = target[e][i][j][1] - coords_temp[1];
+
+        if (Xj[2] > 0.2f && Xi[2] > 0.2f){ //is valid
+            const float invz = 1.0f / Xj[2];
+            const float invz2 = invz*invz;
+
+            const float fx_invz = fx*invz;
+            const float fy_invz = fy*invz;
+            const float neg_fx_x_invz2 = -fx*x*invz2;
+            const float neg_fy_y_invz2 = -fy*y*invz2;
+
+            // Jj computation
+            Jj_out[0] = (h*(fx_invz));
+            Jj_out[1] = (0.0f);
+            Jj_out[2] = (h*(neg_fx_x_invz2));
+            Jj_out[3] = (y*(neg_fx_x_invz2));
+            Jj_out[4] = (z*(fx_invz) - x*(neg_fx_x_invz2));
+            Jj_out[5] = (-y*(fx_invz));
+            Jj_out[6] = (0.0f);       
+            Jj_out[7] = (h*(fy_invz));
+            Jj_out[8] = (h*(neg_fy_y_invz2));
+            Jj_out[9] = (-z*(fy_invz) + y*(neg_fy_y_invz2));
+            Jj_out[10] = (-x*(neg_fy_y_invz2));
+            Jj_out[11] = (x*(fy_invz));
+
+            // Ji computation
+            neg_adjointT(rotT, tij, &Jj_temp, &Ji_temp);
+
+            float depth_diag = 0.0f;
+            float depth_residual = 0.0f;
+            float Ei_temp[6];
+            float Ej_temp[6];
+
+            for(int ii = 0; ii < 2; ii++){
+                const float r = r_temp[ii];
+                const float w = 0.001f * weights[e][i][j][ii];
+                const float Jz = (fx * (tij[ii] * invz - tij[2] * Xj[ii] * invz2));
+                const float wJz = w*Jz;
+                
+                depth_diag += (-wJz) * (-Jz);
+                depth_residual += wJz * r;
+                
+                for(int jj = 0; jj < 6; jj++){
+                    const int ii6_jj = ii*6 + jj;
+                    
+                    const int Ji = Ji_temp[ii6_jj];
+                    const int Jj = Jj_temp[ii6_jj];
+                    
+                    if (ret_cross12){
+                        Ei_temp[jj] += wJz * Jj;
+                        Ej_temp[jj] += wJz * Jj;
+                    }
+
+                    const float wJi = w*Ji;
+                    const float wJj = w*Jj;
+
+                    vi_temp[jj] += wJi * r;
+                    vj_temp[jj] += wJj * r;
+
+                    for(int kk = 0; kk < 6; kk++){
+                        const int ii6_kk = ii*6 + kk;
+
+                        const float Ji = Ji_temp[ii6_kk];
+                        const float Jj = Jj_temp[ii6_kk];
+
+                        Hii_temp[ii][jj] += wJi * Ji;
+                        Hij_temp[ii][jj] += wJi * Jj;
+                        Hji_temp[ii][jj] += wJj * Ji;
+                        Hjj_temp[ii][jj] += wJj * Jj;
+                    }
+                }
+            }
+            
+            const int iwd_j = i*wd + j;
+            depth_diag_out[e][iwd_j] = depth_diag;
+            depth_residual_out[e][iwd_j] = depth_residual;
+            
+            if (ret_cross12){
+                for(int ii = 0; ii < 6; ii++){
+                    Ei_out[e][ii][ij] = Ei_temp[jj];
+                    Ej_out[e][ii][ij] = Ej_temp[jj];
+                }
+            }
+
+        }
+    }
+
+    for (int ii = 0; ii < 6; ii++){
+        vj_out[e][ii] = vj_temp[ii];
+        vi_out[e][ii] = vi_temp[ii];
+
+        for (int jj = 0; jj< 6; jj++){
+            Hii_out[e][ii][jj] = Hii_temp[ii][jj];
+            Hij_out[e][ii][jj] = Hij_temp[ii][jj];
+            Hji_out[e][ii][jj] = Hji_temp[ii][jj];
+            Hjj_out[e][ii][jj] = Hjj_temp[ii][jj];
+        }
+    }
+}
+
+std::vector<tensor> fused_project_and_accumulate_cuda(
+    tensor t, // [P, 3]
+    tensor q, // [P, 4]
+    tensor disps, // [E, ht, wd]
+    tensor intrn, // [4] 
+    tensor ii, // [E]
+    tensor jj, // [E]
+    tensor target, // [E, ht, wd]
+    tensor weight, // [E, ht, wd]
+    bool ret_cross12
+){
+
+    CHECK_INPUT(t);
+    CHECK_INPUT(q);
+    CHECK_INPUT(disps);
+    CHECK_INPUT(intrn);
+    CHECK_INPUT(target);
+    CHECK_INPUT(weight);
+    CHECK_INPUTL(ii);
+    CHECK_INPUTL(jj);
+
+    const int E = ii.size(0);
+    const int H = disps.size(1);
+    const int W = disps.size(2);
+
+    auto ops = disps.options();
+
+    tensor Hii = torch::zeros({E, 6, 6}, ops);
+    tensor Hij = torch::zeros({E, 6, 6}, ops);
+    tensor Hji = torch::zeros({E, 6, 6}, ops);
+    tensor Hjj = torch::zeros({E, 6, 6}, ops);
+
+    tensor vi = torch::zeros({E, 6}, ops);
+    tensor vj = torch::zeros({E, 6}, ops);
+
+    //fused_project_and_accumulate_kernel<<<E, THREADS>>>(...);
+
+}
