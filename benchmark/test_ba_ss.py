@@ -15,28 +15,7 @@ from new import ba_scale_shift as ba_ss_new
 
 from pose_utils import Pose, Intrinsics, matrix_to_quat_cuda
 
-"""
-def bass(
-    target: torch.Tensor, # [E, ht, wd, 2]
-    weight: torch.Tensor, # [E, ht, wd, 2]
-    eta : torch.Tensor, 
-    poses: Pose, # q : [E, 4], t: [E, 3]
-    disps: torch.Tensor, # [E, ht, wd]
-    intrinsics: Intrinsics, # [4]
-    ii: torch.Tensor, # [E]
-    jj: torch.Tensor, # [E]
-    mono_disps: torch.Tensor, # [E, ht, wd]
-    scales: torch.Tensor, # [E]
-    shifts: torch.Tensor, # [E]
-    valid_depth_mask: torch.Tensor, # [E, ht, wd]
-    ignore_frames: int,
-    lm=0.0001,
-    ep=0.1,
-    alpha=1.0,
-    fixedp=1,
-    rig=1,
-):
-"""
+
 def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cuda"):
     torch.manual_seed(seed)
     device = torch.device(device)
