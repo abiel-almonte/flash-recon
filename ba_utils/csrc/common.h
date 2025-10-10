@@ -24,22 +24,66 @@
     CHECK_BOOL(x)
 
 #define THREADS 256
+#define FULLMASK 0xffffffff
+
+using tensor = torch::Tensor;
 
 std::tuple<torch::Tensor, torch::Tensor> fused_projective_transform_with_reduction_cuda(
-    torch::Tensor t,
-    torch::Tensor q,
-    torch::Tensor disps,
-    torch::Tensor intrinsics,
-    torch::Tensor ii,
-    torch::Tensor jj,
-    torch::Tensor target,
-    torch::Tensor weight);
+    tensor t,
+    tensor q,
+    tensor disps,
+    tensor intrinsics,
+    tensor ii,
+    tensor jj,
+    tensor target,
+    tensor weight);
 
 std::tuple<torch::Tensor, torch::Tensor,torch::Tensor> fused_depth_jacobians_cuda(
-    torch::Tensor disps,
-    torch::Tensor mono_disps,
-    torch::Tensor valid_depth,
-    torch::Tensor scales,
-    torch::Tensor shifts,
-    torch::Tensor ignore,
+    tensor disps,
+    tensor mono_disps,
+    tensor valid_depth,
+    tensor scales,
+    tensor shifts,
+    tensor ignore,
     const float alpha);
+
+std::vector<torch::Tensor> fused_project_and_accumulate_cuda(
+    tensor t,
+    tensor q,
+    tensor disps,
+    tensor intrn,
+    tensor ii,
+    tensor jj,
+    tensor target,
+    tensor weight,
+    bool ret_cross12
+);
+
+
+std::vector<torch::Tensor> scatter_pose_system_cuda(
+    tensor Hii,
+    tensor Hij,
+    tensor Hji,
+    tensor Hjj,
+    tensor vi,
+    tensor vj,
+    tensor Ei,
+    tensor Ej,
+    tensor Ck,
+    tensor wk,
+    tensor source_indices,
+    tensor target_indices,
+    tensor edge_to_keyframe,
+    tensor keyframe_indices,
+    tensor damping,
+    int num_opt_poses,
+    int rig_size,
+    int num_fixed_poses,
+    bool ret_cross,
+    bool ret_depth,
+    int M,
+    int ht,
+    int wd,
+    float ep,
+    float lm
+);
