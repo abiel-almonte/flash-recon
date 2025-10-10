@@ -6,6 +6,10 @@ services:
     working_dir: /workspace
     command: ["tail", "-f","/dev/null"]
     gpus: all
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined
     devices:
       - /dev/v4l/by-id/usb-Global_Shutter_Camera_Global_Shutter_Camera_01.00.00-video-index0:/dev/mapping-cam
     volumes:
