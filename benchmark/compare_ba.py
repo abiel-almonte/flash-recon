@@ -179,12 +179,13 @@ def run_ba(f_name, data, ref):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--mode", type=str,  default="frontend")
     args = parser.parse_args()
 
     print("=" * 80)
     print("BA COMPARISON")
     print("=" * 80)
-    files_all = sorted(glob.glob("/workspace/ba_inputs/dspo_*_out.pt"))
+    files_all = sorted(glob.glob(f"/workspace/ba_inputs/dspo_*_{args.mode}_*_out.pt"))
     if args.limit > 0:
         files_all = files_all[:args.limit]
     print(f"\nFound {len(files_all)} files \n")
@@ -220,17 +221,34 @@ def main():
     if results:
         avg_new = sum(x["new"] for x in results) / len(results)
         avg_ref = sum(x["ref"] for x in results) / len(results)
-        avg_latency = sum(x["latency"] for x in results) / len(results)
-        avg_ref_latency = sum(x["ref_latency"] for x in results) / len(results)
+        # Calculate p50, p95, and avg latency
+        def get_percentile(lst, percentile):
+            if not lst:
+                return float('nan')
+            sorted_lst = sorted(lst)
+            k = int(round(len(sorted_lst) * (percentile / 100.0)))
+            k = min(max(k, 0), len(sorted_lst) - 1)
+            return sorted_lst[k]
+
+        latencies = [x["latency"] for x in results]
+        ref_latencies = [x["ref_latency"] for x in results]
+
+        avg_latency = sum(latencies) / len(latencies) if latencies else float('nan')
+        avg_ref_latency = sum(ref_latencies) / len(ref_latencies) if ref_latencies else float('nan')
+        p50_latency = get_percentile(latencies, 50)
+        p50_ref_latency = get_percentile(ref_latencies, 50)
+        p95_latency = get_percentile(latencies, 95)
+        p95_ref_latency = get_percentile(ref_latencies, 95)
+
         print("\n" + "=" * 80)
         print("SUMMARY")
         print("=" * 80)
         print(f"Steps: {len(results)}")
         print(f"Bad Steps: {len(n_bad_results)}")
         print(f"Avg ours: {avg_new:.2f}% | Avg ref: {avg_ref:.2f}%")
-        print(f"Avg latency per iter: {avg_latency:.2f} ms")
-        print(f"Avg ref latency per iter: {avg_ref_latency:.2f} ms")
-        print(f"Speedup: {avg_ref_latency / avg_latency:.2f}x")
+        print(f"Avg latency per iter: {avg_latency:.2f} ms | ref: {avg_ref_latency:.2f} ms | speedup: {avg_ref_latency/avg_latency:.2f}x")
+        print(f"P50 latency per iter: {p50_latency:.2f} ms | ref: {p50_ref_latency:.2f} ms | speedup: {p50_ref_latency/p50_latency:.2f}x")
+        print(f"P95 latency per iter: {p95_latency:.2f} ms | ref: {p95_ref_latency:.2f} ms | speedup: {p95_ref_latency/p95_latency:.2f}x")
         if avg_new >= avg_ref - 0.5:
             print("\nOur BA matches or improves on the reference on average")
         else:
