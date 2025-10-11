@@ -89,14 +89,16 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
             torch.cuda.synchronize()
         old_latency = (time.perf_counter() - start) * 1000.0 / iters
 
+    eta_keyframes = eta[torch.unique(ii)]
+
     with torch.inference_mode():
         for _ in range(50):
-            new_updated_disps, new_wqs = ba_ss_new(target, weight, eta, poses_cuda, disps, intrinsics, ii, jj, mono_disps, scales, shifts, valid_depth_mask)
+            new_updated_disps, new_wqs = ba_ss_new(target, weight, eta_keyframes, poses_cuda, disps, intrinsics, ii, jj, mono_disps, scales, shifts, valid_depth_mask)
         torch.cuda.synchronize()
 
         start = time.perf_counter()
         for _ in range(iters):
-            new_updated_disps, new_wqs = ba_ss_new(target, weight, eta, poses_cuda, disps, intrinsics, ii, jj, mono_disps, scales, shifts, valid_depth_mask)
+            new_updated_disps, new_wqs = ba_ss_new(target, weight, eta_keyframes, poses_cuda, disps, intrinsics, ii, jj, mono_disps, scales, shifts, valid_depth_mask)
             torch.cuda.synchronize()
         new_latency = (time.perf_counter() - start) * 1000.0 / iters
 
