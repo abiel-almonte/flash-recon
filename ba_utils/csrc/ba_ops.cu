@@ -512,13 +512,15 @@ __global__ void fused_project_and_accumulate_kernel(
 
             for(int ii = 0; ii < 2; ii++){
                 const float r = target[e][i][j][ii] - coords_temp[ii];
-                const float w = 0.001f * weight[e][i][j][ii];
+                float w = 0.001f * weight[e][i][j][ii];
                 const float Jz = (ii == 0) ? (fx * (tij[0] * invz - tij[2] * x * invz2))
                                            : (fy * (tij[1] * invz - tij[2] * y * invz2));
                 const float wJz = w*Jz;
                 
-                depth_diag += (-wJz) * (-Jz);
+                depth_diag += wJz * Jz;
                 depth_residual += wJz * r;
+                
+                if (ix == jx) w = 0.0f;
                 
                 for(int jj = 0; jj < 6; jj++){
                     const int ii6_jj = ii*6 + jj;
@@ -841,7 +843,6 @@ __global__ void scatter_pose_system_kernel(
     
     if constexpr(ret_depth) {
         const int keyframe_idx = edge_to_keyframe[e];
-        const int64_t frame_idx = keyframe_indices[keyframe_idx];
         
         for (int k = tid; k < hw; k += blockDim.x) {
             atomicAdd(&depth_diag_out[keyframe_idx][k], Ck[e][k]);
@@ -853,7 +854,7 @@ __global__ void scatter_pose_system_kernel(
         for (int k = tid; k < hw; k += blockDim.x) {
             const int i = k / (damping.size(2));
             const int j = k % (damping.size(2));
-            atomicAdd(&depth_diag_out[keyframe_idx][k], damping[frame_idx][i][j]);
+            atomicAdd(&depth_diag_out[keyframe_idx][k], damping[keyframe_idx][i][j]);
         }
     }
 }
