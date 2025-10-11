@@ -68,34 +68,32 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
     poses_cuda = Pose(t, q)
     intrinsics= Intrinsics(fx, fy, cx, cy)
     
+    # Extract eta for keyframes only and apply scaling (matches reference BA API)
+    eta_keyframes = 0.2 * eta[torch.unique(ii)] + 1e-7
 
+    with torch.inference_mode():
+        for _ in range(50):
+            ba_new(target, weight, eta, poses_cuda, disps, intrinsics, ii, jj)
+        torch.cuda.synchronize()
+
+        start = time.perf_counter()
+        for _ in range(iters):
+            new_updated_poses, new_updated_disps= ba_new(target, weight, eta, poses_cuda, disps, intrinsics, ii, jj)
+            torch.cuda.synchronize()
+        new_latency = (time.perf_counter() - start) * 1000.0 / iters
     
     with torch.inference_mode():
         for _ in range(50):
-            eta_b = .2 * eta[torch.unique(ii)].contiguous()[None] + 1e-7
+            eta_b = eta_keyframes.unsqueeze(0)
             ba_old(target_b, weight_b, eta_b, poses_b, disps_b, intr_b, ii, jj)
         torch.cuda.synchronize()
 
         start = time.perf_counter()
         for _ in range(iters):
-            eta_b = .2 * eta[torch.unique(ii)][None].contiguous() + 1e-7
+            eta_b = eta_keyframes.unsqueeze(0)
             old_updated_poses, old_updated_disps = ba_old(target_b, weight_b, eta_b, poses_b, disps_b, intr_b, ii, jj)
             torch.cuda.synchronize()
         old_latency = (time.perf_counter() - start) * 1000.0 / iters
-
-
-    with torch.inference_mode():
-        for _ in range(50):
-            damping = 0.2 * eta + 1e-7
-            ba_new(target, weight, damping, poses_cuda, disps, intrinsics, ii, jj)
-        torch.cuda.synchronize()
-
-        start = time.perf_counter()
-        for _ in range(iters):
-            damping = 0.2 * eta + 1e-7
-            new_updated_poses, new_updated_disps= ba_new(target, weight, damping, poses_cuda, disps, intrinsics, ii, jj)
-            torch.cuda.synchronize()
-        new_latency = (time.perf_counter() - start) * 1000.0 / iters
 
 
     # Compare pose matrices for proper comparison
@@ -125,7 +123,7 @@ if __name__ == "__main__":
 
     cases = [
         # Quick sanity
-        dict(T=5, H=30, W=40, motion_scale=0.05, iters=100, seed=1),
+        dict(T=10, H=40, W=80, motion_scale=0.05, iters=1000, seed=1),
         # Typical
         dict(T=4, H=64, W=64, motion_scale=0.05, iters=1000, seed=123),
         # Low motion
