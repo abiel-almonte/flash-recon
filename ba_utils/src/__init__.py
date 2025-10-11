@@ -1,4 +1,4 @@
-from .ops_v2 import ba_scale_shift, motion_only_ba, full_ba
+from .ops import ba_scale_shift, motion_only_ba, full_ba
 
 from ba_ops_cuda import (
     fused_projective_transform_with_reduction_cuda,
