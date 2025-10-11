@@ -1,5 +1,6 @@
 
 import sys
+import time
 import argparse
 import glob
 import torch
@@ -96,7 +97,10 @@ def run_ba(f_name, data, ref):
         init_error = compute_depth_alignment_cost(disps_state, mono, scales_state, shifts_state, vmask, ii, alpha)
 
         # eta_m is [M, H, W] for M source keyframes - scaling applied internally
+        start = time.perf_counter()
         disps_state, scale_shift_params_out = ba_scale_shift(target, weight, eta_m, poses_state, disps_state, intr, ii, jj, mono, scales_state, shifts_state, vmask, ignore_frames, lm, ep, alpha)
+        torch.cuda.synchronize()
+        latency = (time.perf_counter() - start) * 1000.0
         scales_state, shifts_state = scale_shift_params_out.split([1, 1], dim= -1)
 
         new_final_error = compute_depth_alignment_cost(disps_state, mono, scales_state, shifts_state, vmask, ii, alpha)
@@ -106,6 +110,7 @@ def run_ba(f_name, data, ref):
         ref_final_scale, ref_final_shift = ref_final_scale_shift.split([1, 1], dim= -1)
 
         ref_final_error = compute_depth_alignment_cost(ref_final_disps, mono, ref_final_scale, ref_final_shift, vmask, ii, alpha)
+        ref_latency = ref["latency_s"] * 1000.0
 
         new_error_reduction = (100 * (init_error - new_final_error) / init_error) if init_error else 0.0
         ref_error_reduction = (100 * (init_error - ref_final_error) / init_error) if init_error else 0.0
@@ -115,8 +120,10 @@ def run_ba(f_name, data, ref):
         print(f"{f_name} - [Depth & Scale]")
         print(f"  new:  {new_error_reduction:.2f}%")
         print(f"  ref:  {ref_error_reduction:.2f}%")
+        print(f"  latency: {latency:.2f} ms")
+        print(f"  ref latency: {ref_latency:.2f} ms")
 
-        return {"f_name": f_name, "new": new_error_reduction, "ref": ref_error_reduction, "bad" : is_bad, "good": is_good}
+        return {"f_name": f_name, "new": new_error_reduction, "ref": ref_error_reduction, "bad" : is_bad, "good": is_good, "latency": latency, "ref_latency": ref_latency}
 
     else:
         t1 = data["t1"]
@@ -138,9 +145,13 @@ def run_ba(f_name, data, ref):
         init_error = compute_reprojection_error(target, weight, poses_state, disps_state, intr, ii, jj, t1)
 
         t0 = data["t0"]
+        timings = []
         for _ in range(iters):
+            start = time.perf_counter()
             poses_state, disps_state = full_ba(target, weight, eta_m, poses_state, disps_state, intr, ii, jj, t1, lm, ep, num_fixed_poses=t0)
-        
+            torch.cuda.synchronize()
+            timings.append(time.perf_counter() - start)
+        latency = sum(timings) / len(timings) * 1000.0 / iters
         new_final_error = compute_reprojection_error(target, weight, poses_state, disps_state, intr, ii, jj, t1)
 
         ref_final_poses = ref["poses"].squeeze(0).to("cuda")
@@ -148,6 +159,7 @@ def run_ba(f_name, data, ref):
 
         ref_final_poses = Pose(ref_final_poses[:, :3].contiguous(), ref_final_poses[:, 3:].contiguous())
         ref_final_error = compute_reprojection_error(target, weight, ref_final_poses, ref_final_disps, intr, ii, jj, t1)
+        ref_latency = ref["latency_s"] / iters * 1000.0
 
         new_error_reduction = (100 * (init_error - new_final_error) / init_error) if init_error else 0.0
         ref_error_reduction = (100 * (init_error - ref_final_error) / init_error) if init_error else 0.0
@@ -157,9 +169,11 @@ def run_ba(f_name, data, ref):
         print(f"{f_name} - [Pose & Depth]")
         print(f"  opt:  {t1}")
         print(f"  new:  {new_error_reduction:.2f}%")
-        print(f"  ref:  {ref_error_reduction:.2f}%\n")
+        print(f"  ref:  {ref_error_reduction:.2f}%")
+        print(f"  latency per iter: {latency:.2f} ms")
+        print(f"  ref latency per iter: {ref_latency:.2f} ms")
 
-        return {"f_name": f_name, "new": new_error_reduction, "ref": ref_error_reduction, "bad" : is_bad, "good": is_good}
+        return {"f_name": f_name, "new": new_error_reduction, "ref": ref_error_reduction, "bad" : is_bad, "good": is_good, "latency": latency, "ref_latency": ref_latency}
 
 
 def main():
@@ -206,12 +220,17 @@ def main():
     if results:
         avg_new = sum(x["new"] for x in results) / len(results)
         avg_ref = sum(x["ref"] for x in results) / len(results)
+        avg_latency = sum(x["latency"] for x in results) / len(results)
+        avg_ref_latency = sum(x["ref_latency"] for x in results) / len(results)
         print("\n" + "=" * 80)
         print("SUMMARY")
         print("=" * 80)
         print(f"Steps: {len(results)}")
         print(f"Bad Steps: {len(n_bad_results)}")
         print(f"Avg ours: {avg_new:.2f}% | Avg ref: {avg_ref:.2f}%")
+        print(f"Avg latency per iter: {avg_latency:.2f} ms")
+        print(f"Avg ref latency per iter: {avg_ref_latency:.2f} ms")
+        print(f"Speedup: {avg_ref_latency / avg_latency:.2f}x")
         if avg_new >= avg_ref - 0.5:
             print("\nOur BA matches or improves on the reference on average")
         else:
