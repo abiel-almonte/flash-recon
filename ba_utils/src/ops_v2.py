@@ -3,7 +3,6 @@ import torch
 torch.set_float32_matmul_precision("high")
 
 from pose_utils import Pose, Tangent, Intrinsics, pose_retraction
-from projective_utils import projective_transform
 from ba_ops_cuda import (
     fused_projective_transform_with_reduction_cuda,
     fused_depth_jacobians_cuda,
@@ -307,7 +306,7 @@ def assemble_full_ba_sys(
     weight: torch.Tensor,
     edge_to_keyframe: torch.Tensor,  # [E]
     keyframe_indices: torch.Tensor,  # [M]
-    damping: torch.Tensor,  # [T, ht, wd]
+    damping: torch.Tensor,  # [M, ht, wd] - damping for M source keyframes
     rig_size: int,
     num_fixed_poses: int,
     n_poses: int,
@@ -390,6 +389,11 @@ def _schur_solve_impl(
     gradient = gradient.reshape(P * d, 1)
     depth_gradient = depth_gradient.reshape(M * hw, 1)
 
+    if ep > 0 or lm > 0:
+        diag_hess = torch.diagonal(hessian)
+        damping_hess = ep + lm * diag_hess
+        hessian = hessian + torch.diag(damping_hess)
+
     cross_termT = cross_term.transpose(-2, -1)  # [M*hw, P*d]
     schur_hessian = hessian - torch.matmul(cross_term, inv_depth_diag * cross_termT)
     schur_gradient = gradient - torch.matmul(
@@ -400,11 +404,25 @@ def _schur_solve_impl(
         U = torch.linalg.cholesky(schur_hessian)
         dx = torch.cholesky_solve(schur_gradient, U)  # [P*d, 1]
     except RuntimeError:
-        dx = torch.zeros(P, d, device=gradient.device, dtype=gradient.dtype)
-        dz = torch.zeros(
-            M, hw, device=depth_gradient.device, dtype=depth_gradient.dtype
-        )
-        return dx, dz
+        dx = None
+        if d <= 2:
+            diag_S = torch.diagonal(schur_hessian)
+            scale = torch.clamp(diag_S.mean(), min=1e-6)
+            I = torch.eye(P * d, device=schur_hessian.device, dtype=schur_hessian.dtype)
+            for tau in (1e-6, 1e-4, 1e-2, 1e-1, 1.0):
+                try:
+                    S_damped = schur_hessian + (tau * scale) * I
+                    U = torch.linalg.cholesky(S_damped)
+                    dx = torch.cholesky_solve(schur_gradient, U)
+                    break
+                except RuntimeError:
+                    continue
+        if dx is None:
+            dx = torch.zeros(P, d, device=gradient.device, dtype=gradient.dtype)
+            dz = torch.zeros(
+                M, hw, device=depth_gradient.device, dtype=depth_gradient.dtype
+            )
+            return dx, dz
 
     dz = inv_depth_diag * (depth_gradient - cross_termT @ dx)  # [M*hw, 1]
     dx = dx.reshape(P, d)
@@ -484,7 +502,6 @@ def block_solve(
     return update
 
 
-@torch.compile(mode="reduce-overhead")
 def scale_shift_assemble_and_solve(
     scale_shift_jac: torch.Tensor,
     depth_jac: torch.Tensor,
@@ -529,7 +546,7 @@ def scale_shift_assemble_and_solve(
 def ba_scale_shift(
     target: torch.Tensor,  # [E, ht, wd, 2] - target optical flow per edge
     weight: torch.Tensor,  # [E, ht, wd, 2] - confidence weights per edge
-    damping: torch.Tensor,  # [T, ht, wd] - regularization per frame
+    eta: torch.Tensor,  # [M, ht, wd] - damping for M source keyframes
     poses: Pose,  # [T] - camera poses (q: [T, 4], t: [T, 3])
     disps: torch.Tensor,  # [T, ht, wd] - disparity maps per frame
     intrinsics: Intrinsics,  # camera intrinsics (fx, fy, cx, cy)
@@ -555,7 +572,7 @@ def ba_scale_shift(
     keyframe_indices, edge_to_keyframe = torch.unique(
         source_indices, return_inverse=True
     )
-    damping_keyframes = 0.2 * damping[keyframe_indices].contiguous() + 1e-7
+    damping_keyframes = eta
 
     scale_shift_params = torch.stack([scales, shifts], dim=-1)  # [T, 2]
 
@@ -675,12 +692,13 @@ def motion_only_ba(
 def full_ba(
     target: torch.Tensor,  # [E, H, W, 2] - target optical flow per edge
     weight: torch.Tensor,  # [E, H, W, 2] - confidence weights per edge
-    damping: torch.Tensor,  # [T, H, W] - regularization per frame
+    eta: torch.Tensor,  # [M, H, W] - damping for M source keyframes
     poses: Pose,  # [T] - camera poses (q: [T, 4], t: [T, 3])
     disps: torch.Tensor,  # [T, H, W] - disparity maps per frame
     intrinsics: Intrinsics,  # camera intrinsics (fx, fy, cx, cy)
     source_indices: torch.Tensor,  # [E] - source frame indices for each edge
     target_indices: torch.Tensor,  # [E] - target frame indices for each edge
+    n: int = 0,
     lm: float = 0.0001,  # Levenberg-Marquardt damping
     ep: float = 0.1,  # epsilon for numerical stability
     alpha: float = 0.05,  # weight for depth regularization (unused in current impl)
@@ -691,34 +709,56 @@ def full_ba(
 
     Jointly optimize camera poses and disparities.
     """
-
-    n_poses, ht, wd = disps.shape
     manifold_dim = 6
+    T = poses.t.shape[0]
 
-    keyframe_indices, edge_to_keyframe = torch.unique(
-        source_indices, return_inverse=True
-    )
+    if n == 0:
+        n = T
+
+    use_window = n < T
+
+    if use_window:
+        poses_window = poses[:n]
+        disps_window = disps[:n]
+
+        valid = (source_indices < n) & (target_indices < n)
+        ii_window = source_indices[valid].contiguous()
+        jj_window = target_indices[valid].contiguous()
+        target_window = target[valid].contiguous()
+        weight_window = weight[valid].contiguous()
+    else:
+        poses_window = poses
+        disps_window = disps
+        ii_window = source_indices
+        jj_window = target_indices
+        target_window = target
+        weight_window = weight
+
+    n_poses, ht, wd = disps_window.shape
+    keyframe_indices, edge_to_keyframe = torch.unique(ii_window, return_inverse=True)
+
+    damping_keyframes = 0.2 * eta + 1e-7
 
     # ========== PROJECTIVE JACOBIANS & LINEAR SYSTEM CONSTRUCTION ==========
 
     hessian, gradient, cross_term, depth_diag, depth_gradient = assemble_full_ba_sys(
-        poses,
-        disps,
+        poses_window,
+        disps_window,
         intrinsics,
-        source_indices,
-        target_indices,
-        target,
-        weight,
+        ii_window,
+        jj_window,
+        target_window,
+        weight_window,
         edge_to_keyframe,
         keyframe_indices,
-        damping,
+        damping_keyframes,
         rig_size,
         num_fixed_poses,
         n_poses,
         ht,
         wd,
-        ep,
-        lm,
+        ep=0,  # Don't apply damping in CUDA - let schur_solve handle it
+        lm=0,
     )
 
     # hessian [P, P, 6, 6]
@@ -727,23 +767,31 @@ def full_ba(
     # depth_diag [M, ht*wd]
     # depth_gradient [M, ht*wd]
 
-    # ========== SOLVE LINEAR SYSTEM (COMPILED) ==========
-    pose_update, depth_update = schur_solve_compiled(
+    # ========== SOLVE LINEAR SYSTEM ==========
+    pose_update, depth_update = schur_solve(
         hessian, cross_term, depth_diag, gradient, depth_gradient, ep, lm
     )
     # pose_update [P, 6]
     # depth_update [M, ht*wd]
 
     # ========== APPLY UPDATES ==========
-    full_update = torch.zeros(
+    window_update = torch.zeros(
         (n_poses, manifold_dim), device=disps.device, dtype=disps.dtype
     )
-    full_update[num_fixed_poses : num_fixed_poses + pose_update.size(0)] = pose_update
+    window_update[num_fixed_poses : num_fixed_poses + pose_update.size(0)] = pose_update
 
-    tangent = Tangent(full_update[:, :3], full_update[:, 3:])
-    poses_out = pose_retraction(poses, tangent)
+    tangent = Tangent(window_update[:, :3], window_update[:, 3:])
+    poses_window_out = pose_retraction(poses_window, tangent)
 
-    disps_out = disps.index_add(0, keyframe_indices, depth_update.view(-1, ht, wd))
-    disps_out.clamp_(min=0.0)
+    disps_window_out = disps_window.index_add(
+        0, keyframe_indices, depth_update.view(-1, ht, wd)
+    )
+    disps_window_out.clamp_(min=0.0)
 
-    return poses_out, disps_out
+    if use_window:
+        poses.t[:n] = poses_window_out.t
+        poses.q[:n] = poses_window_out.q
+        disps[:n] = disps_window_out
+        return poses, disps
+    else:
+        return poses_window_out, disps_window_out
