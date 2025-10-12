@@ -22,7 +22,7 @@ def fused_induced_flow_cuda(
     jj: torch.Tensor,
 ) -> list[torch.Tensor]:
     """
-    Fused induced flow (iproj+SE3+proj)
+    Fused induced flow
     """
 
 def fused_projective_cuda(
@@ -46,7 +46,7 @@ def fused_projective_jac_cuda(
     jj: torch.Tensor,
 ) -> list[torch.Tensor]:
     """
-    Fused projective transform with jacobians (iproj+SE3+proj)
+    Fused projective transform with jacobians
     """
 
 def proj_cuda(
