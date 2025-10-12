@@ -10,9 +10,7 @@ sys.path.append("/workspace")
 sys.path.append("/workspace/Splat-SLAM")
 sys.path.append("/workspace/benchmark")
 
-from pose_utils import Pose, Intrinsics
-from ba_utils import full_ba, ba_scale_shift
-from projective_utils import projective_transform
+from geometry import Pose, Intrinsics, full_ba, ba_scale_shift, projective_transform
 
 def compute_reprojection_error(target, weight, poses, disps, intrinsics, ii, jj, n = 0):
     T = poses.t.shape[0]
@@ -114,8 +112,8 @@ def run_ba(f_name, data, ref):
 
         new_error_reduction = (100 * (init_error - new_final_error) / init_error) if init_error else 0.0
         ref_error_reduction = (100 * (init_error - ref_final_error) / init_error) if init_error else 0.0
-        is_good = new_error_reduction > 0 and (new_error_reduction - ref_error_reduction) > 5.0
-        is_bad = ref_error_reduction > 0 and (ref_error_reduction - new_error_reduction) > 5.0
+        is_good = new_error_reduction > 0 and (new_error_reduction - ref_error_reduction) > 1.0
+        is_bad = ref_error_reduction > 0 and (ref_error_reduction - new_error_reduction) > 1.0
 
         print(f"{f_name} - [Depth & Scale]")
         print(f"  new:  {new_error_reduction:.2f}%")
@@ -163,8 +161,8 @@ def run_ba(f_name, data, ref):
 
         new_error_reduction = (100 * (init_error - new_final_error) / init_error) if init_error else 0.0
         ref_error_reduction = (100 * (init_error - ref_final_error) / init_error) if init_error else 0.0
-        is_good = new_error_reduction > 0 and (new_error_reduction - ref_error_reduction) > 5.0
-        is_bad = ref_error_reduction > 0 and (ref_error_reduction - new_error_reduction) > 5.0
+        is_good = new_error_reduction > 0 and (new_error_reduction - ref_error_reduction) > 1.0
+        is_bad = ref_error_reduction > 0 and (ref_error_reduction - new_error_reduction) > 1.0
 
         print(f"{f_name} - [Pose & Depth]")
         print(f"  opt:  {t1}")
