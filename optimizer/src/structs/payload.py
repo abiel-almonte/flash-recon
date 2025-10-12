@@ -1,9 +1,13 @@
 from dataclasses import dataclass
 from typing import Optional
+from .roles import CallerRole
 
 @dataclass
 class OptimizationPayload:
 	"""Payload containing all data needed for bundle adjustment optimization."""
+	# Caller role
+	role: CallerRole
+	
 	# Core optimization data
 	target: object
 	weight: object
