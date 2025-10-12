@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from structs import OptimizationPayload, CallerRole
 from geometry import full_ba, motion_only_ba, ba_scale_shift
 
@@ -12,13 +14,13 @@ class DSPOptimizer:
 		self.ep = optim_cfg.get("ep", 0.1)
 		self.alpha = optim_cfg.get("alpha", 0.05)
 
-	def _dispatcher(self, payload: OptimizationPayload, caller: str) -> OptimizationPayload:
+	def _dispatcher(self, payload: OptimizationPayload) -> OptimizationPayload:
 		"""Dispatch optimization schedule based on the caller role.
 
 		caller: one of {"frontend", "backend", "traj_filler"}
 		"""
 		iters = max(1, payload.iters)
-		role = CallerRole(caller)
+		role = payload.role if payload.role else CallerRole.BACKEND
 
 		if role is CallerRole.FRONTEND:
 			for itr in range(iters):
@@ -53,21 +55,22 @@ class DSPOptimizer:
 
 		return payload
 
-	def __call__(self, buffer, caller: str = "frontend") -> OptimizationPayload:
-		payload = buffer.create_dspo_payload(caller)
+	def __call__(self, payload: OptimizationPayload,  payload_overrides: dict = None) -> OptimizationPayload:
+		if payload_overrides:
+			payload = replace(payload, **payload_overrides)
 
 		if payload.lm is None:
-			payload.lm = self.lm
+			payload = replace(payload, lm=self.lm)
 		if payload.ep is None:
-			payload.ep = self.ep
+			payload = replace(payload, ep=self.ep)
 		if payload.alpha is None:
-			payload.alpha = self.alpha
+			payload = replace(payload, alpha=self.alpha)
 		if payload.num_fixed_poses is None:
-			payload.num_fixed_poses = self.num_fixed_poses
+			payload = replace(payload, num_fixed_poses=self.num_fixed_poses)
 		if payload.rig_size is None:
-			payload.rig_size = self.rig_size
+			payload = replace(payload, rig_size=self.rig_size)
 
-		return self._dispatcher(payload, caller)
+		return self._dispatcher(payload)
 
 	def _step_depth_scale(self, payload: OptimizationPayload) -> OptimizationPayload:
 		"""Perform depth-scale optimization (full BA w/ scale shift)  step."""
