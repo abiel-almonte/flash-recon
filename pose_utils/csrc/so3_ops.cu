@@ -18,10 +18,18 @@ __global__ void quat_multiply_kernel(const float *q1, const float *q2, float *re
     const float q2z = q2[idx4 + 2];
     const float q2w = q2[idx4 + 3];
 
-    result[idx4 + 0] = q1w * q2x + q1x * q2w + q1y * q2z - q1z * q2y; // x
-    result[idx4 + 1] = q1w * q2y - q1x * q2z + q1y * q2w + q1z * q2x; // y
-    result[idx4 + 2] = q1w * q2z + q1x * q2y - q1y * q2x + q1z * q2w; // z
-    result[idx4 + 3] = q1w * q2w - q1x * q2x - q1y * q2y - q1z * q2z; // w
+    const float rx = q1w * q2x + q1x * q2w + q1y * q2z - q1z * q2y; // x
+    const float ry = q1w * q2y - q1x * q2z + q1y * q2w + q1z * q2x; // y
+    const float rz = q1w * q2z + q1x * q2y - q1y * q2x + q1z * q2w; // z
+    const float rw = q1w * q2w - q1x * q2x - q1y * q2y - q1z * q2z; // w
+    
+    const float norm = sqrtf(rx * rx + ry * ry + rz * rz + rw * rw);
+    const float inv_norm = 1.0f / (norm + 1e-9f);
+    
+    result[idx4 + 0] = rx * inv_norm;
+    result[idx4 + 1] = ry * inv_norm;
+    result[idx4 + 2] = rz * inv_norm;
+    result[idx4 + 3] = rw * inv_norm;
 }
 
 __global__ void single_quat_rotate_kernel(const float *q, const float *points, float *out, const int batch_size) {
