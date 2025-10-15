@@ -13,7 +13,7 @@ for p in ["/workspace", "/workspace/Splat-SLAM"]:
 from originals import induced_flow as induced_flow_old
 from new import induced_flow as induced_flow_new
 
-from pose_utils import Pose, Intrinsics, matrix_to_quat_cuda
+from geometry import Intrinsics, matrix_to_pose
 
 
 def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cuda"):
@@ -46,10 +46,7 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
         ii = torch.arange(0, T - 1, device=device, dtype=torch.long)
         jj = torch.arange(1, T, device=device, dtype=torch.long)
 
-    R = poses_se3.matrix()[:, :3, :3].contiguous()
-    t = poses_se3.matrix()[:, :3, 3].contiguous()
-    q = matrix_to_quat_cuda(R)
-    poses_cuda = Pose(t, q)
+    poses_cuda = matrix_to_pose(poses_se3.matrix())
     intrinsics_cuda = Intrinsics(fx, fy, cx, cy)
 
     with torch.inference_mode():
