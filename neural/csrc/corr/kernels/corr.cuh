@@ -36,29 +36,38 @@ __global__ void corr_forward_kernel(
     float x0 = coords[n][0][y][x];
     float y0 = coords[n][1][y][x];
 
-    float dx = x0 - floor(x0);
-    float dy = y0 - floor(y0);
+    const int fx = __float2int_rd(x0);
+    const int fy = __float2int_rd(y0);
 
-    int rd = 2 * r + 1;
+    const float dx = x0 - fx;
+    const float dy = y0 - fy;
+
+    const float w00 = dx * dy;
+    const float w01 = dx * (1.0f - dy);
+    const float w10 = (1.0f - dx) * dy;
+    const float w11 = (1.0f - dx) * (1.0f - dy);
+
+    const int rd = 2 * r + 1;
     for (int i = 0; i < rd + 1; i++) {
+        const int x1 = fx - r + i;
+
         for (int j = 0; j < rd + 1; j++) {
-            int x1 = static_cast<int>(floor(x0)) - r + i;
-            int y1 = static_cast<int>(floor(y0)) - r + j;
+            const int y1 = fy - r + j;
 
             if (within_bounds(y1, x1, h2, w2)) {
                 float s = volume[n][y][x][y1][x1];
 
                 if (i > 0 && j > 0)
-                    corr_out[n][i - 1][j - 1][y][x] += s * float(dx * dy);
+                    corr_out[n][i - 1][j - 1][y][x] += s * w00;
 
                 if (i > 0 && j < rd)
-                    corr_out[n][i - 1][j][y][x] += s * float(dx * (1.0f - dy));
+                    corr_out[n][i - 1][j][y][x] += s * w01;
 
                 if (i < rd && j > 0)
-                    corr_out[n][i][j - 1][y][x] += s * float((1.0f - dx) * dy);
+                    corr_out[n][i][j - 1][y][x] += s * w10;
 
                 if (i < rd && j < rd)
-                    corr_out[n][i][j][y][x] += s * float((1.0f - dx) * (1.0f - dy));
+                    corr_out[n][i][j][y][x] += s * w11;
             }
         }
     }
