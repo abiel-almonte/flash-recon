@@ -6,7 +6,6 @@ import time
 import torch
 import lietorch
 
-# Make both workspace roots importable (common in dev containers vs local)
 for p in ["/workspace", "/workspace/Splat-SLAM"]:
     if p not in sys.path:
         sys.path.append(p)
