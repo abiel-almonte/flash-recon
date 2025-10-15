@@ -7,8 +7,6 @@ from neural_cuda.corr import corr_forward
 class CorrBlock:
 
     def __init__(self, num_levels: int = 4, radius: int = 3) -> None:
-        super().__init__()
-
         self.num_levels = num_levels
         self.radius = radius
         self.pyramid = None
