@@ -6,6 +6,9 @@ services:
     working_dir: /workspace
     command: ["tail", "-f","/dev/null"]
     gpus: all
+    ports:
+      - "9090:9090"
+      - "9876:9876"
     cap_add:
       - SYS_ADMIN
     security_opt:
