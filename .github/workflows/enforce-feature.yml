@@ -1,0 +1,18 @@
+name: Enforce feature branch policy
+
+on:
+  pull_request:
+    branches:
+      - dev
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Block non-feature branches
+        run: |
+          echo "Source branch: ${{ github.head_ref }}"
+          if [[ ! "${{ github.head_ref }}" =~ ^feature/ ]]; then
+            echo "PRs into dev must come from a feature/* branch."
+            exit 1
+          fi

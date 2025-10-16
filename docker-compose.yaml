@@ -6,6 +6,13 @@ services:
     working_dir: /workspace
     command: ["tail", "-f","/dev/null"]
     gpus: all
+    ports:
+      - "9090:9090"
+      - "9876:9876"
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined
     devices:
       - /dev/v4l/by-id/usb-Global_Shutter_Camera_Global_Shutter_Camera_01.00.00-video-index0:/dev/mapping-cam
     volumes:
