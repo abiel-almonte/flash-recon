@@ -29,7 +29,7 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
     else:
         ii = torch.arange(0, T - 1, device=device, dtype=torch.long)
         jj = torch.arange(1, T, device=device, dtype=torch.long)
-        E = T -1 
+        E = T - 1
 
     # Data
     target = torch.rand(E, H, W, 2, device=device, dtype=dtype)
@@ -51,7 +51,7 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
     xi = torch.randn(T, 6, device=device, dtype=dtype) * motion_scale
     poses_se3 = lietorch.SE3.exp(xi)
     poses_vec = poses_se3.vec().contiguous()  # [T, 7]
-    
+
     target_b = target[None]
     weight_b = weight[None]
     poses_b = lietorch.SE3(poses_vec[None])
@@ -71,18 +71,44 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
         jj = torch.arange(1, T, device=device, dtype=torch.long)
 
     poses_cuda = matrix_to_pose(poses_se3.matrix())
-    intrinsics= Intrinsics(fx, fy, cx, cy)
+    intrinsics = Intrinsics(fx, fy, cx, cy)
 
     with torch.inference_mode():
         for _ in range(50):
-            eta_b = .2 * eta[torch.unique(ii)].contiguous()[None] + 1e-7
-            ba_ss_old(target_b, weight_b, eta_b, poses_b, disps_b, intr_b, ii, jj, mono_disps_b, scales_b, shifts_b, valid_depth_mask_b)
+            eta_b = 0.2 * eta[torch.unique(ii)].contiguous()[None] + 1e-7
+            ba_ss_old(
+                target_b,
+                weight_b,
+                eta_b,
+                poses_b,
+                disps_b,
+                intr_b,
+                ii,
+                jj,
+                mono_disps_b,
+                scales_b,
+                shifts_b,
+                valid_depth_mask_b,
+            )
         torch.cuda.synchronize()
 
         start = time.perf_counter()
         for _ in range(iters):
-            eta_b = .2 * eta[torch.unique(ii)][None].contiguous() + 1e-7
-            _, old_updated_disps, old_wqs = ba_ss_old(target_b, weight_b, eta_b, poses_b, disps_b, intr_b, ii, jj, mono_disps_b, scales_b, shifts_b, valid_depth_mask_b)
+            eta_b = 0.2 * eta[torch.unique(ii)][None].contiguous() + 1e-7
+            _, old_updated_disps, old_wqs = ba_ss_old(
+                target_b,
+                weight_b,
+                eta_b,
+                poses_b,
+                disps_b,
+                intr_b,
+                ii,
+                jj,
+                mono_disps_b,
+                scales_b,
+                shifts_b,
+                valid_depth_mask_b,
+            )
             torch.cuda.synchronize()
         old_latency = (time.perf_counter() - start) * 1000.0 / iters
 
@@ -90,19 +116,47 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
 
     with torch.inference_mode():
         for _ in range(50):
-            new_updated_disps, new_wqs = ba_ss_new(target, weight, eta_keyframes, poses_cuda, disps, intrinsics, ii, jj, mono_disps, scales, shifts, valid_depth_mask)
+            new_updated_disps, new_wqs = ba_ss_new(
+                target,
+                weight,
+                eta_keyframes,
+                poses_cuda,
+                disps,
+                intrinsics,
+                ii,
+                jj,
+                mono_disps,
+                scales,
+                shifts,
+                valid_depth_mask,
+            )
         torch.cuda.synchronize()
 
         start = time.perf_counter()
         for _ in range(iters):
-            new_updated_disps, new_wqs = ba_ss_new(target, weight, eta_keyframes, poses_cuda, disps, intrinsics, ii, jj, mono_disps, scales, shifts, valid_depth_mask)
+            new_updated_disps, new_wqs = ba_ss_new(
+                target,
+                weight,
+                eta_keyframes,
+                poses_cuda,
+                disps,
+                intrinsics,
+                ii,
+                jj,
+                mono_disps,
+                scales,
+                shifts,
+                valid_depth_mask,
+            )
             torch.cuda.synchronize()
         new_latency = (time.perf_counter() - start) * 1000.0 / iters
 
     old_updated_disps = old_updated_disps.squeeze(0)
     old_wqs = old_wqs.squeeze(0)
 
-    old_updated_disps_max_diff = (old_updated_disps - new_updated_disps).abs().max().item()
+    old_updated_disps_max_diff = (
+        (old_updated_disps - new_updated_disps).abs().max().item()
+    )
     old_wqs_max_dif = (old_wqs - new_wqs).abs().max().item()
 
     stats = {
