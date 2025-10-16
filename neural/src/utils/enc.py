@@ -6,21 +6,21 @@ DIM = 32
 
 
 class BasicEncoder(nn.Module):
-    def __init__(self, out_dim, norm_fn='batch'):
+    def __init__(self, out_dim, norm_fn="batch"):
         super(BasicEncoder, self).__init__()
         self.out_dim = out_dim
         self.norm_fn = norm_fn
 
-        if norm_fn == 'group':
+        if norm_fn == "group":
             self.norm1 = nn.GroupNorm(num_groups=8, num_channels=DIM)
 
-        elif norm_fn == 'batch':
+        elif norm_fn == "batch":
             self.norm1 = nn.BatchNorm2d(DIM)
 
-        elif norm_fn == 'instance':
+        elif norm_fn == "instance":
             self.norm1 = nn.InstanceNorm2d(DIM)
 
-        elif self.norm_fn == 'none':
+        elif self.norm_fn == "none":
             self.norm1 = nn.Sequential()
 
         else:
@@ -31,14 +31,14 @@ class BasicEncoder(nn.Module):
 
         self.in_planes = DIM
         self.layer1 = self._make_layer(DIM, stride=1)
-        self.layer2 = self._make_layer(2*DIM, stride=2)
-        self.layer3 = self._make_layer(4*DIM, stride=2)
+        self.layer2 = self._make_layer(2 * DIM, stride=2)
+        self.layer3 = self._make_layer(4 * DIM, stride=2)
 
-        self.conv2 = nn.Conv2d(4*DIM, out_dim, kernel_size=(1, 1))
+        self.conv2 = nn.Conv2d(4 * DIM, out_dim, kernel_size=(1, 1))
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(m, (nn.BatchNorm2d, nn.InstanceNorm2d, nn.GroupNorm)):
                 if m.weight is not None:
                     nn.init.constant_(m.weight, 1)
@@ -56,7 +56,7 @@ class BasicEncoder(nn.Module):
 
     def forward(self, x):
         b, n, c1, h1, w1 = x.shape
-        x = x.view(b*n, c1, h1, w1)
+        x = x.view(b * n, c1, h1, w1)
 
         x = self.conv1(x)
         x = self.norm1(x)
