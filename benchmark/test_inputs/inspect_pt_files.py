@@ -1,14 +1,17 @@
 import os
 import torch
 
-def inspect_pt_files(folder='/workspace/ba_inputs'):
-    pt_files = [f for f in os.listdir(folder) if f.endswith('.pt') or f.endswith('.pth')]
+
+def inspect_pt_files(folder="/workspace/ba_inputs"):
+    pt_files = [
+        f for f in os.listdir(folder) if f.endswith(".pt") or f.endswith(".pth")
+    ]
     if not pt_files:
         print("No .pt or .pth files found in the folder.")
         return
 
     for fname in pt_files:
-        print("="*80)
+        print("=" * 80)
         print(f"File: {fname}")
         try:
             data = torch.load(os.path.join(folder, fname), map_location="cpu")
@@ -25,12 +28,15 @@ def inspect_pt_files(folder='/workspace/ba_inputs'):
                     else:
                         print(f"  {k}: {type(v)}")
             elif torch.is_tensor(data):
-                print(f"  (no dict) tensor, shape {tuple(data.shape)}, dtype {data.dtype}")
+                print(
+                    f"  (no dict) tensor, shape {tuple(data.shape)}, dtype {data.dtype}"
+                )
             else:
                 print("  File content is not a dict or tensor.")
         except Exception as e:
             print(f"  Failed to load/inspect: {e}")
-    print("="*80)
+    print("=" * 80)
+
 
 if __name__ == "__main__":
     inspect_pt_files()

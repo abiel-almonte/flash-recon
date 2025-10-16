@@ -12,7 +12,7 @@ class DroidNet(nn.Module):
         self.cnet = BasicEncoder(out_dim=256, norm_fn="none")
         self.update = UpdateModule()
 
-        self._load_weights(cfg["neural"]["droid"])
+        self._load_weights(cfg["weights"]["droid"])
 
     def _load_weights(self, fp: str):
         state_dict = OrderedDict(
