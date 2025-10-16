@@ -32,6 +32,14 @@ class Pose:
 
     def __getitem__(self, idx):
         return Pose(self.t[idx], self.q[idx])
+    
+    def __setitem__(self, idx, pose: "Pose"):
+        if isinstance(pose, "Pose"):
+            self.t[idx] = pose.t
+            self.q[idx] = pose.q
+            
+        else:
+            raise ValueError(f"pose must be of type Pose. Got {pose.__class__}")
 
     @property
     def device(self):
