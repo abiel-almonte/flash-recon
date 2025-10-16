@@ -10,15 +10,15 @@ __forceinline__ __device__ bool within_bounds(int h, int w, int H, int W) {
 
 Tensor corr_forward(
     const Tensor volume, // [T, H, W, Hi, Wi]
-    const Tensor coords, // [T, H, W, 2]
+    const Tensor coords, // [T, 2 H, W]
     const int radius
 );
 __global__ void corr_forward_kernel(
     const PackedAccessor<float, 5> volume,
     const PackedAccessor<float, 4> coords,
     PackedAccessor<float, 5> corr_out,
-    const int r)
-{
+    const int r
+) {
 
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
