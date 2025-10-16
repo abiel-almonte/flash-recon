@@ -29,7 +29,7 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
     else:
         ii = torch.arange(0, T - 1, device=device, dtype=torch.long)
         jj = torch.arange(1, T, device=device, dtype=torch.long)
-        E = T -1 
+        E = T - 1
 
     # Data
     target = torch.rand(E, H, W, 2, device=device, dtype=dtype)
@@ -47,7 +47,7 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
     xi = torch.randn(T, 6, device=device, dtype=dtype) * motion_scale
     poses_se3 = lietorch.SE3.exp(xi)
     poses_vec = poses_se3.vec().contiguous()  # [T, 7]
-    
+
     target_b = target[None]
     weight_b = weight[None]
     poses_b = lietorch.SE3(poses_vec[None])
@@ -63,20 +63,20 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
         jj = torch.arange(1, T, device=device, dtype=torch.long)
 
     poses_cuda = matrix_to_pose(poses_se3.matrix())
-    intrinsics= Intrinsics(fx, fy, cx, cy)
-    
+    intrinsics = Intrinsics(fx, fy, cx, cy)
 
-    
     with torch.inference_mode():
         for _ in range(50):
-            eta_b = .2 * eta[torch.unique(ii)].contiguous()[None] + 1e-7
+            eta_b = 0.2 * eta[torch.unique(ii)].contiguous()[None] + 1e-7
             _ = mo_ba_old(target_b, weight_b, eta_b, poses_b, disps_b, intr_b, ii, jj)
         torch.cuda.synchronize()
 
         start = time.perf_counter()
         for _ in range(iters):
-            eta_b = .2 * eta[torch.unique(ii)][None].contiguous() + 1e-7
-            old_updated_poses = mo_ba_old(target_b, weight_b, eta_b, poses_b, disps_b, intr_b, ii, jj)
+            eta_b = 0.2 * eta[torch.unique(ii)][None].contiguous() + 1e-7
+            old_updated_poses = mo_ba_old(
+                target_b, weight_b, eta_b, poses_b, disps_b, intr_b, ii, jj
+            )
             torch.cuda.synchronize()
         old_latency = (time.perf_counter() - start) * 1000.0 / iters
 
@@ -87,16 +87,17 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
 
         start = time.perf_counter()
         for _ in range(iters):
-            new_updated_poses = mo_ba_new(target, weight, poses_cuda, disps, intrinsics, ii, jj)
+            new_updated_poses = mo_ba_new(
+                target, weight, poses_cuda, disps, intrinsics, ii, jj
+            )
             torch.cuda.synchronize()
         new_latency = (time.perf_counter() - start) * 1000.0 / iters
 
     old_vec = old_updated_poses.vec()[0]  # Remove batch dimension [N, 7]
     new_vec = torch.cat([new_updated_poses.t, new_updated_poses.q], dim=-1)  # [N, 7]
-    
+
     updated_poses_max_diff = (old_vec - new_vec).abs().max().item()
     speedup = old_latency / new_latency
-    
 
     stats = {
         "Updated Poses Diff": updated_poses_max_diff,
@@ -104,7 +105,7 @@ def run_case(T=4, H=64, W=64, motion_scale=0.05, iters=50, seed=123, device="cud
         "New Latency (ms)": new_latency,
         "Speedup": speedup,
     }
-    
+
     return stats
 
 
