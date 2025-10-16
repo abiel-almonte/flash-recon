@@ -7,15 +7,27 @@ class ConvGRU(nn.Module):
         super(ConvGRU, self).__init__()
         self.do_checkpoint = False
 
-        self.convz = nn.Conv2d(h_planes+i_planes, h_planes, kernel_size=(3, 3), padding=(1, 1))
-        self.convr = nn.Conv2d(h_planes+i_planes, h_planes, kernel_size=(3, 3), padding=(1, 1))
-        self.convq = nn.Conv2d(h_planes+i_planes, h_planes, kernel_size=(3, 3), padding=(1, 1))
+        self.convz = nn.Conv2d(
+            h_planes + i_planes, h_planes, kernel_size=(3, 3), padding=(1, 1)
+        )
+        self.convr = nn.Conv2d(
+            h_planes + i_planes, h_planes, kernel_size=(3, 3), padding=(1, 1)
+        )
+        self.convq = nn.Conv2d(
+            h_planes + i_planes, h_planes, kernel_size=(3, 3), padding=(1, 1)
+        )
 
         self.w = nn.Conv2d(h_planes, h_planes, kernel_size=(1, 1), padding=(0, 0))
 
-        self.convz_glo = nn.Conv2d(h_planes, h_planes, kernel_size=(1, 1), padding=(0, 0))
-        self.convr_glo = nn.Conv2d(h_planes, h_planes, kernel_size=(1, 1), padding=(0, 0))
-        self.convq_glo = nn.Conv2d(h_planes, h_planes, kernel_size=(1, 1), padding=(0, 0))
+        self.convz_glo = nn.Conv2d(
+            h_planes, h_planes, kernel_size=(1, 1), padding=(0, 0)
+        )
+        self.convr_glo = nn.Conv2d(
+            h_planes, h_planes, kernel_size=(1, 1), padding=(0, 0)
+        )
+        self.convq_glo = nn.Conv2d(
+            h_planes, h_planes, kernel_size=(1, 1), padding=(0, 0)
+        )
 
     def forward(self, net, *inputs):
         inp = torch.cat(inputs, dim=1)
@@ -23,13 +35,14 @@ class ConvGRU(nn.Module):
 
         b, c, h, w = net.shape
         glo = torch.sigmoid(self.w(net)) * net
-        glo = glo.view(b, c, h*w).mean(dim=-1, keepdim=True).view(b, c, 1, 1)
+        glo = glo.view(b, c, h * w).mean(dim=-1, keepdim=True).view(b, c, 1, 1)
 
         z = torch.sigmoid(self.convz(net_inp) + self.convz_glo(glo))
         r = torch.sigmoid(self.convr(net_inp) + self.convr_glo(glo))
-        q = torch.tanh(self.convq(torch.cat([r*net, inp], dim=1)) + self.convq_glo(glo))
+        q = torch.tanh(
+            self.convq(torch.cat([r * net, inp], dim=1)) + self.convq_glo(glo)
+        )
 
         net = (1 - z) * net + z * q
 
         return net
-    
