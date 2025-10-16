@@ -1,7 +1,7 @@
 from dataclasses import replace
 
-from structs import OptimizationPayload, CallerRole
 from geometry import full_ba, motion_only_ba, ba_scale_shift
+from .structs import OptimizationPayload, CallerRole
 
 class DSPOptimizer:
 	def __init__(self, cfg):
