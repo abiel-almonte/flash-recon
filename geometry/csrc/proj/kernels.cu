@@ -200,7 +200,7 @@ Tensor fused_depth_filter_cuda(
     auto opts = disps.options();
     Tensor count = torch::zeros({M, H, W}, opts);
 
-    dim3 grid(M, 6); // 6 views max
+    dim3 grid(M, 6, (H*W + THREADS - 1) / THREADS); // 6 views max
     depth_filter_kernel<<<grid, THREADS>>>(
         t.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
         q.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
