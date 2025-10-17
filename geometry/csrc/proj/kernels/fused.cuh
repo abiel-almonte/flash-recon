@@ -413,13 +413,8 @@ __global__ void depth_filter_kernel(
 
         const int u0 = __float2int_rd(uj);
         const int v0 = __float2int_rd(vj);
-        const int u1 = __float2int_ru(uj);
-        const int v1 = __float2int_ru(vj);
 
         if (u0 >= 0 && v0 >= 0 && u0 < wd-1 && v0 < ht-1) {
-            const float wx = u1 - uj;
-            const float wy = v1 - vj;
-
             const float invd00 = 1.0f / (disps[jx][v0+0][u0+0] + EPS);
             const float invd01 = 1.0f / (disps[jx][v0+0][u0+1] + EPS);
             const float invd10 = 1.0f / (disps[jx][v0+1][u0+0] + EPS);
