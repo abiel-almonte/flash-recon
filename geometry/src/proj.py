@@ -1,10 +1,11 @@
 import torch
 
 from structs import Pose, Intrinsics
-from utils import (
+from .utils import (
     projective_transform_jac_fused,
     projective_transform_fused,
     induced_flow_fused,
+    depth_filter_fused,
 )
 
 
@@ -31,3 +32,13 @@ def induced_flow(
 ):
     """optical flow induced by camera motion"""
     return induced_flow_fused(poses, disps, intrinsics, ii, jj)
+
+
+def depth_filter(
+    poses: Pose,
+    disps: torch.Tensor,
+    intrinsics: Intrinsics,
+    ii: torch.Tensor,
+    thresh: torch.Tensor,
+):
+    return depth_filter_fused(poses, disps, intrinsics, ii, thresh)
