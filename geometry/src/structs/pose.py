@@ -31,12 +31,20 @@ class Pose:
         self.t = self.t.contiguous()
 
     def __getitem__(self, idx):
-        return Pose(self.t[idx], self.q[idx])
+        t = self.t[idx]
+        q = self.q[idx]
+        if t.ndim == 1:
+            t = t.unsqueeze(0)
+        if q.ndim == 1:
+            q = q.unsqueeze(0)
+        return Pose(t, q)
 
     def __setitem__(self, idx, pose: "Pose"):
-        if isinstance(pose, "Pose"):
-            self.t[idx] = pose.t
-            self.q[idx] = pose.q
+        if isinstance(pose, Pose):
+            t = pose.t[0] if pose.t.ndim == 2 else pose.t
+            q = pose.q[0] if pose.q.ndim == 2 else pose.q
+            self.t[idx] = t
+            self.q[idx] = q
 
         else:
             raise ValueError(f"pose must be of type Pose. Got {pose.__class__}")
