@@ -11,14 +11,14 @@ class OptimizationPayload:
     role: CallerRole
 
     # Core optimization data
-    target: object
-    weight: object
-    eta: object
-    poses: object
-    disps: object
-    intrinsics: object
-    ii: object
-    jj: object
+    target: Optional[object] = None
+    weight: Optional[object] = None
+    eta: Optional[object] = None
+    poses: Optional[object] = None
+    disps: Optional[object] = None
+    intrinsics: Optional[object] = None
+    ii: Optional[object] = None
+    jj: Optional[object] = None
 
     # Scale-shift specific data
     mono_disps: Optional[object] = None
