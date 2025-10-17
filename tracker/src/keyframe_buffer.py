@@ -8,7 +8,7 @@ from geometry import (
     identity_pose,
     pose_inv,
     pose_to_matrix,
-    depth_filter,
+    depth_filter
 )
 
 
@@ -171,7 +171,7 @@ class KeyFrameBuffer:
             disps = self._disps
 
         depths = 1.0 / (disps_to_update.clamp_min(1e-5))
-        thresh = self.depth_filter_thresh * depths.flatten(1).mean(dim=-1)
+        thresh = self.depth_filter_thresh * depths.flatten(1).mean(dim=-1) # [M]
 
         count = depth_filter(self._poses, disps, intrinsics, update_indices, thresh)
         depths[count < self.depth_filter_n_views] = torch.nan

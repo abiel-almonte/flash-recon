@@ -1,6 +1,6 @@
 from .structs import Pose, Tangent, Intrinsics
 from .ba import full_ba, motion_only_ba, ba_scale_shift
-from .proj import projective_transform, induced_flow
+from .proj import projective_transform, induced_flow, depth_filter
 from .lie import (
     pose_to_tangent,
     tangent_to_pose,
@@ -21,6 +21,7 @@ __all__ = [
     "ba_scale_shift",
     "projective_transform",
     "induced_flow",
+    "depth_filter",
     "pose_to_tangent",
     "tangent_to_pose",
     "identity_pose",

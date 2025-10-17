@@ -177,3 +177,39 @@ std::vector<Tensor> fused_induced_flow_cuda(
 
     return {coords, valid};
 }
+
+Tensor fused_depth_filter_cuda(
+    Tensor t, // [T, 3]
+    Tensor q, // [T, 4]
+    Tensor disps, // [T, H, W]
+    Tensor intrinsics, // [4]
+    Tensor ii, // [M]
+    Tensor thresh // [M]
+) { 
+    CHECK_INPUT(t);
+    CHECK_INPUT(q);
+    CHECK_INPUT(disps);
+    CHECK_INPUT(intrinsics);
+    CHECK_INPUTL(ii);
+    CHECK_INPUT(thresh);
+
+    const int M = ii.size(0);
+    const int H = disps.size(1);
+    const int W = disps.size(2);
+
+    auto opts = disps.options();
+    Tensor count = torch::zeros({M, H, W}, opts);
+
+    dim3 grid(M, 6); // 6 views max
+    depth_filter_kernel<<<grid, THREADS>>>(
+        t.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        q.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        disps.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+        intrinsics.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+        ii.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
+        thresh.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+        count.packed_accessor32<float, 3, torch::RestrictPtrTraits>()
+    );
+
+    return count;
+}

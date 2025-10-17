@@ -6,12 +6,25 @@ from __future__ import annotations
 import torch
 
 __all__: list[str] = [
+    "fused_depth_filter_cuda",
     "fused_induced_flow_cuda",
     "fused_projective_cuda",
     "fused_projective_jac_cuda",
     "proj_cuda",
     "proj_jac_cuda",
 ]
+
+def fused_depth_filter_cuda(
+    t: torch.Tensor,
+    q: torch.Tensor,
+    disps: torch.Tensor,
+    intrinsics: torch.Tensor,
+    ii: torch.Tensor,
+    thresh: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Count number of neighboring depths are consistent
+    """
 
 def fused_induced_flow_cuda(
     t: torch.Tensor,
