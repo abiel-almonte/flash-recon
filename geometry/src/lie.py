@@ -184,8 +184,8 @@ def matrix_to_pose(T: torch.Tensor) -> Pose:
        SE3 pose
     """
 
-    rot_matrix = T[..., :3, :3]
-    t = T[..., :3, 3]
+    rot_matrix = T[..., :3, :3].contiguous()
+    t = T[..., :3, 3].contiguous()
     q = matrix_to_quat_cuda(rot_matrix)
 
     return Pose(t, q)
