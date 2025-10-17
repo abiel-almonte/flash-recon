@@ -18,6 +18,10 @@ class KeyFrameBuffer:
         self.down_scale = int(cfg.get("cam", {}).get("down_scale", 8))
         H_out = int(cfg.get("cam", {}).get("H_out", 480))
         W_out = int(cfg.get("cam", {}).get("W_out", 640))
+        fx = float(cfg.get("cam", {}).get("fx", 300.0))
+        fy = float(cfg.get("cam", {}).get("fy", 300.0))
+        cx = float(cfg.get("cam", {}).get("cx", W_out / 2.0))
+        cy = float(cfg.get("cam", {}).get("cy", H_out / 2.0))
         self.ht = H_out // self.down_scale
         self.wd = W_out // self.down_scale
         self.radius = int(cfg.get("tracking", {}).get("frontend", {}).get("radius", 1))
@@ -33,7 +37,7 @@ class KeyFrameBuffer:
 
         # Preallocated state
         self._poses: Pose = identity_pose(self.capacity, device=self.device)
-        self._intrinsics: Intrinsics = None
+        self._intrinsics: Intrinsics = Intrinsics(fx, fy, cx, cy, device=self.device)
         self._disps = torch.ones(self.capacity, self.ht, self.wd, device=self.device)
         self._disps_up = torch.zeros(self.capacity, H_out, W_out, device=self.device)
         self._mono_disps = torch.zeros(
@@ -78,7 +82,7 @@ class KeyFrameBuffer:
     def get_camera2world(self, index):
         w2c = self._poses[index]
         c2w = pose_to_matrix(pose_inv(w2c))
-        return c2w
+        return c2w.squeeze(0)
 
     def get_geometric_attrs(self):
         return self._poses, self._disps, self._intrinsics
@@ -108,7 +112,7 @@ class KeyFrameBuffer:
 
         self._poses[idx] = pose
         self._disps[idx] = disp
-        self._valid_depth_mask[idx] = disp > 0
+        self._valid_depth_mask_small[idx] = disp > 0
 
         if mono_disp is not None:
             self._mono_disps[idx] = mono_disp
@@ -163,11 +167,11 @@ class KeyFrameBuffer:
 
         if up:
             disps_to_update = torch.index_select(self._disps_up, 0, update_indices)
-            intrinsics = self._intrinsics.scale_resolution(self.down_scale).as_tensor
+            intrinsics = self._intrinsics.scale_resolution(self.down_scale)
             disps = self._disps_up
         else:
             disps_to_update = torch.index_select(self._disps, 0, update_indices)
-            intrinsics = self._intrinsics.as_tensor
+            intrinsics = self._intrinsics
             disps = self._disps
 
         depths = 1.0 / (disps_to_update.clamp_min(1e-5))
@@ -214,15 +218,9 @@ class KeyFrameBuffer:
         self.set_needs_update(slice(0, self._count))
 
     def create_dspo_payload(self, role: CallerRole) -> OptimizationPayload:
-        assert (
-            self._intrinsics is not None
-        ), "Intrinsics must be set before creating payload"
-
         T = self._count
         if T == 0:
             raise RuntimeError("Buffer is empty")
-
-        self._update_edges_cache()
 
         poses = self._poses[:T]
         disps = self._disps[:T]
