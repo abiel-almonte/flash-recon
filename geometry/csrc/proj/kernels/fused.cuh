@@ -332,9 +332,10 @@ __global__ void depth_filter_kernel(
     const PackedAccessor<float, 1> thresh,
     PackedAccessor<float, 3> counter_out
 ) {
-    const int m = blockIdx.x;
-    const int neigh_id = blockIdx.y;
-    const int tid = threadIdx.x;
+	const int m = blockIdx.x;
+	const int neigh_id = blockIdx.y;
+	const int tid = threadIdx.x;
+	const int idx = blockIdx.z * blockDim.x + tid;
 
     const int n = disps.size(0);
     const int ht = disps.size(1);
@@ -382,9 +383,9 @@ __global__ void depth_filter_kernel(
     __syncthreads();
 
     
-      for (int k = tid; k < ht*wd; k += blockDim.x) {
-        const int i = k / wd;
-        const int j = k % wd;
+	if (idx < ht*wd) {
+        const int i = idx / wd;
+        const int j = idx % wd;
         const float u = static_cast<float>(j);
         const float v = static_cast<float>(i);
 
