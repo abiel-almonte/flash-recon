@@ -23,15 +23,25 @@ class CorrBlock:
         corr = torch.bmm(f1.transpose(-2, -1), f2)  # [T, p, p]
         corr = corr.view(T * p, 1, ht, wd)
 
-        self.pyramid = []
+        pyramid = []
         for i in range(self.num_levels):
             Hi = corr.shape[-2]
             Wi = corr.shape[-1]
 
-            self.pyramid.append(corr.view(T, ht, wd, Hi, Wi))
+            if self.pyramid:
+                pyramid.append(
+                    torch.cat([self.pyramid[i], corr.view(T, ht, wd, Hi, Wi)], dim=0)
+                )
+            else:
+                pyramid.append(corr.view(T, ht, wd, Hi, Wi))
 
             if i + 1 < self.num_levels:
                 corr = F.avg_pool2d(corr, kernel_size=2, stride=2)
+
+        self.pyramid = pyramid
+
+    def clear_pyramid(self):
+        self.pyramid = None
 
     def __call__(self, coords: torch.Tensor):  # [T, h, w, 2]
         T, ht, wd, _ = coords.shape
