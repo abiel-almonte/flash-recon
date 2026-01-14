@@ -1,8 +1,9 @@
 import torch
-import numpy as np
 
 from geometry import get_meshgrid, projective_transform
 from neural import CorrBlock
+
+from .structs import CallerRole, BufferPayload, ProximityPayload
 
 
 class FactorGraph:
@@ -20,6 +21,7 @@ class FactorGraph:
         self.coords0 = torch.stack(
             **get_meshgrid(ht, wd, device=self.device, dtype=torch.float), dim=-1
         )
+
         self.ii = torch.as_tensor([], device=self.device, dtype=torch.long)
         self.jj = torch.as_tensor([], device=self.device, dtype=torch.long)
         self.age = torch.as_tensor([], device=self.device, dtype=torch.long)
@@ -41,7 +43,7 @@ class FactorGraph:
     def _remove_duplicates(self, ii, jj):
         """remove duplicate edges"""
         curr_ii = torch.cat([self.ii, self.ii_inac], dim=0)
-        curr_jj = torch.cat([self.ii, self.ii_inac], dim=0)
+        curr_jj = torch.cat([self.jj, self.jj_inac], dim=0)
 
         encoding_stride = max(curr_ii.max(), curr_jj.max(), ii.max(), jj.max())
 
@@ -97,9 +99,9 @@ class FactorGraph:
 
         self.ii[self.ii >= ix] -= 1
         self.jj[self.jj >= ix] -= 1
-        self.remove_factors(m, store=False)
+        self.remove_factors(m, store_inac=False)
 
-    def add_factors(self, ii, jj, buffer_payload, remove=False):
+    def add_factors(self, ii, jj, buffer_payload: BufferPayload, remove=False):
         """add edges to factor graph"""
 
         ii, jj = self._remove_duplicates(ii, jj)
@@ -144,15 +146,15 @@ class FactorGraph:
         if self.net is None:
             self.net = net
         else:
-            torch.cat([self.net, net], dim=1)
+            self.net = torch.cat([self.net, net], dim=1)
 
         inp = buffer_payload.inps[ii]
         if self.inp is None:
             self.inp = inp
         else:
-            torch.cat([self.inp, inp], dim=1)
+            self.inp = torch.cat([self.inp, inp], dim=1)
 
-    def add_neighborhood_factors(self, t0, t1, buffer_payload):
+    def add_neighborhood_factors(self, t0, t1, buffer_payload: BufferPayload):
         """add edges between neighboring frames within radius"""
 
         ii, jj = get_meshgrid((t0, t1), (t0, t1), device=self.device, dtype=torch.long)
@@ -163,11 +165,10 @@ class FactorGraph:
 
         self.add_factors(ii[keep], jj[keep], buffer_payload)
 
-    def add_frontend_proximity_factors(
+    def _add_frontend_proximity_factors(
         self,
-        count: int,
         dist: torch.Tensor,
-        buffer_payload,
+        buffer_payload: BufferPayload,
         t0: int = 0,
         t1: int = 0,
         rad: int = 2,
@@ -177,11 +178,15 @@ class FactorGraph:
     ):
         """Add proximity-based edges"""
 
+        count = buffer_payload.count
         gpu_device = self.device
         cpu_device = torch.device("cpu")
         stride = count - t1
 
-        ii, jj = get_meshgrid((t0, count), (t1, count), device=cpu_device, dtype=torch.long)
+        ix = torch.arange(t0, count)
+        jx = torch.arange(t1, count)
+
+        ii, jj = torch.meshgrid(ix, jx,indexing="ij")
         ii = ii.flatten()
         jj = jj.flatten()
 
@@ -189,21 +194,38 @@ class FactorGraph:
         d[(ii - rad) < jj] = torch.inf
         d[d > 100] = torch.inf
 
+        ii1: torch.Tensor = torch.cat([self.ii, self.ii_bad, self.ii_inac], dim=0)
+        jj1: torch.Tensor = torch.cat([self.jj, self.jj_bad, self.jj_inac], dim=0)
+
+        for i, j in zip(ii1.tolist(), jj1.tolist()):
+            r = max(min(abs(i - j) - 2, nms), 0)
+
+            for di in range(-nms, nms + 1):
+
+                for dj in range(-nms, nms + 1):
+                    if abs(di) + abs(dj) <= r:
+                        i1 = i + di
+                        j1 = j + dj
+
+                        if (t0 <= i1 < count) and (t1 <= j1 < count):
+                            flat_idx = (i1 - t0) * stride + (j1 - t1)
+                            d[flat_idx] = torch.inf
+
         es = []
         for i in range(t0, count):
-            j_start = max(i - rad - 1, t1)
-            for j in range(j_start, i):
+            for j in range(max(i - rad - 1, 0), i):
                 es.append((i, j))
                 es.append((j, i))
+
                 flat_idx = (i - t0) * stride + (j - t1)
                 d[flat_idx] = torch.inf
 
         order = torch.argsort(d)
         cap = self.max_factors if self.max_factors > 0 else float("inf")
-
         for k in order.tolist():
             if d[k].item() > thresh:
                 continue
+
             if len(es) > cap:
                 break
 
@@ -215,10 +237,12 @@ class FactorGraph:
 
             r = max(min(abs(i - j) - 2, nms), 0)
             for di in range(-nms, nms + 1):
+
                 for dj in range(-nms, nms + 1):
                     if abs(di) + abs(dj) <= r:
                         i1 = i + di
                         j1 = j + dj
+
                         if (t0 <= i1 < count) and (t1 <= j1 < count):
                             flat_idx = (i1 - t0) * stride + (j1 - t1)
                             d[flat_idx] = torch.inf
@@ -226,12 +250,13 @@ class FactorGraph:
         if len(es) < 1:
             return
 
-        ii_new, jj_new = torch.as_tensor(es, device=cpu_device, dtype=torch.long).unbind(dim=-1)
-        ii_new = ii_new.to(gpu_device)
-        jj_new = jj_new.to(gpu_device)
+        ii_new, jj_new = torch.as_tensor(
+            es, device=gpu_device, dtype=torch.long
+        ).unbind(dim=-1)
+
         self.add_factors(ii_new, jj_new, buffer_payload, remove)
 
-    def add_backend_proximity_factors(
+    def _add_backend_proximity_factors(
         self,
         dist: torch.Tensor,
         buffer_payload,
@@ -269,14 +294,14 @@ class FactorGraph:
 
         edges = []
         for i in range(t0_loop, t1):
-            for j in range(max(i - rad - 1, t0), i):
+            for j in range(max(i - rad - 1, 0), i):
                 edges.append((i, j))
                 edges.append((j, i))
                 di = i - t0_loop
                 dj = j - t0
                 d[di, dj] = torch.inf
 
-        vals, flat_ix = torch.sort(d.reshape(-1), descending=False)
+        vals, flat_ix = torch.sort(d.flatten(), descending=False)
         flat_ix = flat_ix[vals <= thresh]
 
         loop_edges = 0
@@ -288,23 +313,33 @@ class FactorGraph:
             jjx = jj[flat_ix]
 
             if loop:
-                window = torch.arange(-n_neighboring, n_neighboring + 1, device=cpu_device)
+                window = torch.arange(
+                    -n_neighboring, n_neighboring + 1, device=cpu_device
+                )
                 si = (window + iix[:, None]).clamp(t0_loop, t1 - 1)
                 sj = (window + jjx[:, None]).clamp(t0, t1 - 1)
                 SI, SJ = torch.meshgrid(si.flatten(), sj.flatten(), indexing="ij")
 
-                mask = (rawd[(SI - t0_loop).long(), (SJ - t0).long()] <= thresh) & (SI - SJ > 20)
+                mask = (rawd[(SI - t0_loop).long(), (SJ - t0).long()] <= thresh) & (
+                    SI - SJ > 20
+                )
 
                 sub_edges = torch.stack([SI[mask], SJ[mask]], dim=-1)
                 loop_edges += sub_edges.size(0)
                 if sub_edges.numel() > 0:
                     edges += [(int(a), int(b)) for a, b in sub_edges.tolist()]
             else:
-                edges += [(int(a), int(b)) for a, b in torch.stack([iix, jjx], dim=-1).tolist()]
-                edges += [(int(a), int(b)) for a, b in torch.stack([jjx, iix], dim=-1).tolist()]
+                edges += [
+                    (int(a), int(b))
+                    for a, b in torch.stack([iix, jjx], dim=-1).tolist()
+                ]
+                edges += [
+                    (int(a), int(b))
+                    for a, b in torch.stack([jjx, iix], dim=-1).tolist()
+                ]
 
-            di = (flat_ix // jlen)
-            dj = (flat_ix % jlen)
+            di = flat_ix // jlen
+            dj = flat_ix % jlen
 
             offsets = torch.arange(-nms, nms + 1, device=cpu_device)
             dy, dx = torch.meshgrid(offsets, offsets, indexing="ij")
@@ -322,12 +357,38 @@ class FactorGraph:
         if len(edges) < 3 or (loop and loop_edges == 0):
             return 0
 
-        ii_new, jj_new = torch.as_tensor(edges, device=cpu_device, dtype=torch.long).unbind(dim=-1)
-        ii_new = ii_new.to(gpu_device)
-        jj_new = jj_new.to(gpu_device)
+        ii_new, jj_new = torch.as_tensor(
+            edges, device=gpu_device, dtype=torch.long
+        ).unbind(dim=-1)
         self.add_factors(ii_new, jj_new, buffer_payload, remove=True)
 
         return len(self.ii)
+
+    def add_proximity_factors(self, payload: ProximityPayload):
+        if payload.role == CallerRole.FRONTEND:
+            self._add_frontend_proximity_factors(
+                dist=payload.dist,
+                buffer_payload=payload.buffer_payload,
+                t0=payload.t0,
+                t1=payload.t1,
+                rad=payload.rad,
+                nms=payload.nms,
+                thresh=payload.thresh,
+                remove=payload.remove,
+            )
+        else:
+            self._add_backend_proximity_factors(
+                dist=payload.dist,
+                buffer_payload=payload.buffer_payload,
+                t0=payload.t0,
+                t1=payload.t1,
+                rad=payload.rad,
+                nms=payload.nms,
+                thresh=payload.thresh,
+                max_factors=payload.max_factors,
+                t0_loop=payload.t0_loop,
+                loop=payload.loop,
+            )
 
     def clear(self):
         self.ii = None
