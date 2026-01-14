@@ -41,10 +41,10 @@ class Pose:
 
     def __setitem__(self, idx, pose: "Pose"):
         if isinstance(pose, Pose):
-            t = pose.t[0] if pose.t.ndim == 2 else pose.t
-            q = pose.q[0] if pose.q.ndim == 2 else pose.q
-            self.t[idx] = t
-            self.q[idx] = q
+            # Handle batch assignment: self._poses[:T] = payload.poses
+            # pose.t and pose.q should match the slice shape
+            self.t[idx] = pose.t.squeeze(0) if pose.t.ndim == 2 and pose.t.size(0) == 1 else pose.t
+            self.q[idx] = pose.q.squeeze(0) if pose.q.ndim == 2 and pose.q.size(0) == 1 else pose.q
 
         else:
             raise ValueError(f"pose must be of type Pose. Got {pose.__class__}")

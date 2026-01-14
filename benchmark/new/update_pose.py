@@ -4,7 +4,8 @@ from geometry import (
     Pose,
     Tangent,
     pose_retraction,
-    matrix_to_pose
+    matrix_to_pose,
+    pose_to_matrix,
 )
 
 
@@ -16,13 +17,20 @@ def update_pose(camera, converged_threshold=1e-4):
     phi = camera.cam_rot_delta.unsqueeze(0)  # [1, 3]
     tangent = Tangent(rho, phi)
 
-    current_pose = matrix_to_pose(camera.R.unsqueeze(0))
+    # Build 4x4 transformation matrix from camera.R (3x3) and camera.T (3,)
+    T_mat = torch.eye(4, device=camera.R.device, dtype=camera.R.dtype)
+    T_mat[:3, :3] = camera.R
+    T_mat[:3, 3] = camera.T
 
+    current_pose = matrix_to_pose(T_mat.unsqueeze(0))
     new_pose = pose_retraction(current_pose, tangent)
 
-    #new_R = quat_to_matrix_cuda(new_pose.q)[0]  # [3, 3]
-    new_T = new_pose.t[0]  # [3]
-    #camera.update_RT(new_R, new_T)
+    # Extract new R and T from the updated pose
+    new_T_mat = pose_to_matrix(new_pose)[0]  # [4, 4]
+    new_R = new_T_mat[:3, :3]  # [3, 3]
+    new_T = new_T_mat[:3, 3]   # [3]
+
+    camera.update_RT(new_R, new_T)
 
     tau = torch.cat([camera.cam_trans_delta, camera.cam_rot_delta])
     converged = tau.norm() < converged_threshold

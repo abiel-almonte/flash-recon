@@ -43,6 +43,17 @@ class CorrBlock:
     def clear_pyramid(self):
         self.pyramid = None
 
+    def filter_pyramid(self, keep: torch.Tensor):
+        if self.pyramid is None:
+            return
+        self.pyramid = [level[keep] for level in self.pyramid]
+
+    def __getitem__(self, keep: torch.Tensor) -> "CorrBlock":
+        new_corr = CorrBlock(num_levels=self.num_levels, radius=self.radius)
+        if self.pyramid is not None:
+            new_corr.pyramid = [level[keep] for level in self.pyramid]
+        return new_corr
+
     def __call__(self, coords: torch.Tensor):  # [T, h, w, 2]
         T, ht, wd, _ = coords.shape
         coords = coords.permute(0, 3, 1, 2).contiguous()
