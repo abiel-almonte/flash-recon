@@ -18,10 +18,8 @@ class FactorGraph:
         buffer_capacity = int(cfg.get("tracking", {}).get("buffer", 512))
         self.max_factors = int(cfg.get("tracking", {}).get("max_factors", -1))
         self.radius = int(cfg.get("tracking", {}).get("frontend", {}).get("radius", 3))
-        self.coords0 = torch.stack(
-            **get_meshgrid(ht, wd, device=self.device, dtype=torch.float), dim=-1
-        )
-
+        y, x = get_meshgrid(ht, wd, device=self.device, dtype=torch.float)
+        self.coords0 = torch.stack([y, x], dim=-1)
         self.ii = torch.as_tensor([], device=self.device, dtype=torch.long)
         self.jj = torch.as_tensor([], device=self.device, dtype=torch.long)
         self.age = torch.as_tensor([], device=self.device, dtype=torch.long)
