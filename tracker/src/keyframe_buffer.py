@@ -159,16 +159,18 @@ class KeyFrameBuffer:
         if up:
             disps_to_update = torch.index_select(self._disps_up, 0, update_indices)
             intrinsics = self._intrinsics.scale_resolution(self.down_scale)
-            disps = self._disps_up
+            disps = self._disps_up[: self._count]
         else:
             disps_to_update = torch.index_select(self._disps, 0, update_indices)
             intrinsics = self._intrinsics
-            disps = self._disps
+            disps = self._disps[: self._count]
 
         depths = 1.0 / (disps_to_update.clamp_min(1e-5))
         thresh = self.depth_filter_thresh * depths.flatten(1).mean(dim=-1)  # [M]
 
-        count = depth_filter(self._poses, disps, intrinsics, update_indices, thresh)
+        # Slice poses to valid frames so kernel neighbor bounds are correct
+        poses = self._poses[: self._count]
+        count = depth_filter(poses, disps, intrinsics, update_indices, thresh)
         depths[count < self.depth_filter_n_views] = torch.nan
 
         depths_median, _ = depths.flatten(1).nanmedian(dim=-1)
