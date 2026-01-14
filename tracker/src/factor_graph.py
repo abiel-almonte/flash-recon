@@ -78,10 +78,10 @@ class FactorGraph:
             self.corr = self.corr[keep]
 
         if self.net is not None:
-            self.net = self.net[:, keep]
+            self.net = self.net[keep]
 
         if self.inp is not None:
-            self.inp = self.inp[:, keep]
+            self.inp = self.inp[keep]
 
     def remove_keyframe(self, ix):
         """drop edges from factor graph"""
@@ -129,8 +129,8 @@ class FactorGraph:
             buffer_payload.poses,
             buffer_payload.disps,
             buffer_payload.intrinsics,
-            ii,
-            jj,
+            ii.contiguous(),
+            jj.contiguous(),
             jacobian=False,
         )
         weight = torch.zeros_like(target)
@@ -142,20 +142,21 @@ class FactorGraph:
         self.weight = torch.cat([self.weight, weight], dim=0)
 
         fmap1 = buffer_payload.fmaps[ii, 0]
-        fmap2 = buffer_payload.fmaps[jj, ii == jj]
+        c = (ii == jj).long().clamp(max=buffer_payload.fmaps.size(1) - 1)
+        fmap2 = buffer_payload.fmaps[jj, c]
         self.corr.build_pyramid(fmap1, fmap2)
 
         net = buffer_payload.nets[ii]
         if self.net is None:
             self.net = net
         else:
-            self.net = torch.cat([self.net, net], dim=1)
+            self.net = torch.cat([self.net, net], dim=0)
 
         inp = buffer_payload.inps[ii]
         if self.inp is None:
             self.inp = inp
         else:
-            self.inp = torch.cat([self.inp, inp], dim=1)
+            self.inp = torch.cat([self.inp, inp], dim=0)
 
     def add_neighborhood_factors(self, t0, t1, buffer_payload: BufferPayload):
         """add edges between neighboring frames within radius"""

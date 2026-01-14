@@ -61,7 +61,7 @@ class ProximityPayload:
 
     buffer_payload: Optional[BufferPayload] = None
     dist: Optional[object] = None
-    t0_loop: Optional[int]
+    t0_loop: Optional[int] = None
 
     t0: int = 0
     t1: int = 0
