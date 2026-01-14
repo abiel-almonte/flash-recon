@@ -43,7 +43,12 @@ class FactorGraph:
         curr_ii = torch.cat([self.ii, self.ii_inac], dim=0)
         curr_jj = torch.cat([self.jj, self.jj_inac], dim=0)
 
-        encoding_stride = max(curr_ii.max(), curr_jj.max(), ii.max(), jj.max())
+        # Handle empty current edges - nothing to deduplicate against
+        if curr_ii.numel() == 0:
+            return ii, jj
+
+        all_max = max(curr_ii.max().item(), curr_jj.max().item(), ii.max().item(), jj.max().item())
+        encoding_stride = all_max + 1
 
         edges = ii * encoding_stride + jj
         curr_edges = curr_ii * encoding_stride + curr_jj
@@ -155,9 +160,10 @@ class FactorGraph:
     def add_neighborhood_factors(self, t0, t1, buffer_payload: BufferPayload):
         """add edges between neighboring frames within radius"""
 
-        ii, jj = get_meshgrid((t0, t1), (t0, t1), device=self.device, dtype=torch.long)
-        ii = ii.flatten()
-        jj = jj.flatten()
+        ix = torch.arange(t0, t1, device=self.device, dtype=torch.long)
+        ii, jj = torch.meshgrid(ix, ix, indexing="ij")
+        ii = ii.reshape(-1)
+        jj = jj.reshape(-1)
 
         keep = ((ii - jj).abs() > 0) & ((ii - jj).abs() <= self.radius)
 
