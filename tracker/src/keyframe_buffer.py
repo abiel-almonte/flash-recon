@@ -8,7 +8,7 @@ from geometry import (
     identity_pose,
     pose_inv,
     pose_to_matrix,
-    depth_filter
+    depth_filter,
 )
 
 
@@ -22,9 +22,8 @@ class KeyFrameBuffer:
         fy = float(cfg.get("cam", {}).get("fy", 300.0))
         cx = float(cfg.get("cam", {}).get("cx", W_out / 2.0))
         cy = float(cfg.get("cam", {}).get("cy", H_out / 2.0))
-        self.ht = H_out // self.down_scale
-        self.wd = W_out // self.down_scale
-        self.radius = int(cfg.get("tracking", {}).get("frontend", {}).get("radius", 1))
+        ht = H_out // self.down_scale
+        wd = W_out // self.down_scale
         self.iters = int(cfg.get("optim", {}).get("iters_per_call", 2))
         self.ignore_frames = int(cfg.get("tracking", {}).get("warmup", 1))
         self.capacity = int(cfg.get("tracking", {}).get("buffer", 512))
@@ -38,18 +37,16 @@ class KeyFrameBuffer:
         # Preallocated state
         self._poses: Pose = identity_pose(self.capacity, device=self.device)
         self._intrinsics: Intrinsics = Intrinsics(fx, fy, cx, cy, device=self.device)
-        self._disps = torch.ones(self.capacity, self.ht, self.wd, device=self.device)
+        self._disps = torch.ones(self.capacity, ht, wd, device=self.device)
         self._disps_up = torch.zeros(self.capacity, H_out, W_out, device=self.device)
-        self._mono_disps = torch.zeros(
-            self.capacity, self.ht, self.wd, device=self.device
-        )
+        self._mono_disps = torch.zeros(self.capacity, ht, wd, device=self.device)
         self._scales = torch.zeros(self.capacity, device=self.device)
         self._shifts = torch.zeros(self.capacity, device=self.device)
         self._valid_depth_mask = torch.zeros(
             self.capacity, H_out, W_out, device=self.device, dtype=torch.bool
         )
         self._valid_depth_mask_small = torch.zeros(
-            self.capacity, self.ht, self.wd, device=self.device, dtype=torch.bool
+            self.capacity, ht, wd, device=self.device, dtype=torch.bool
         )
         self.needs_update = torch.zeros(
             self.capacity, device=self.device, dtype=torch.bool
@@ -57,15 +54,9 @@ class KeyFrameBuffer:
         self._count = 0
 
         # Feature attrs
-        self.fmaps = torch.zeros(
-            self.capacity, 1, 128, self.ht, self.wd, device=self.device
-        )
-        self.nets = torch.zeros(
-            self.capacity, 128, self.ht, self.wd, device=self.device
-        )
-        self.inps = torch.zeros(
-            self.capacity, 128, self.ht, self.wd, device=self.device
-        )
+        self.fmaps = torch.zeros(self.capacity, 1, 128, ht, wd, device=self.device)
+        self.nets = torch.zeros(self.capacity, 128, ht, wd, device=self.device)
+        self.inps = torch.zeros(self.capacity, 128, ht, wd, device=self.device)
 
     def get_scale_shift(self, index):
         return self._scales[index], self._shifts[index]
@@ -79,7 +70,7 @@ class KeyFrameBuffer:
     def get_vmask(self, index):
         return self._valid_depth_mask[index]
 
-    def get_camera2world(self, index):
+    def get_cam2world(self, index):
         w2c = self._poses[index]
         c2w = pose_to_matrix(pose_inv(w2c))
         return c2w.squeeze(0)
@@ -168,16 +159,18 @@ class KeyFrameBuffer:
         if up:
             disps_to_update = torch.index_select(self._disps_up, 0, update_indices)
             intrinsics = self._intrinsics.scale_resolution(self.down_scale)
-            disps = self._disps_up
+            disps = self._disps_up[: self._count]
         else:
             disps_to_update = torch.index_select(self._disps, 0, update_indices)
             intrinsics = self._intrinsics
-            disps = self._disps
+            disps = self._disps[: self._count]
 
         depths = 1.0 / (disps_to_update.clamp_min(1e-5))
-        thresh = self.depth_filter_thresh * depths.flatten(1).mean(dim=-1) # [M]
+        thresh = self.depth_filter_thresh * depths.flatten(1).mean(dim=-1)  # [M]
 
-        count = depth_filter(self._poses, disps, intrinsics, update_indices, thresh)
+        # Slice poses to valid frames so kernel neighbor bounds are correct
+        poses = self._poses[: self._count]
+        count = depth_filter(poses, disps, intrinsics, update_indices, thresh)
         depths[count < self.depth_filter_n_views] = torch.nan
 
         depths_median, _ = depths.flatten(1).nanmedian(dim=-1)
