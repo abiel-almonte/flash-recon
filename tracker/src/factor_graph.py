@@ -299,7 +299,7 @@ class FactorGraph:
 
         edges = []
         for i in range(t0_loop, t1):
-            for j in range(max(i - rad - 1, 0), i):
+            for j in range(max(i - rad - 1, t0), i):  # droid-slam impl:  j in range(max(i - rad - 1, 0), i):
                 edges.append((i, j))
                 edges.append((j, i))
                 di = i - t0_loop

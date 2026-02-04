@@ -352,7 +352,7 @@ __global__ void depth_filter_kernel(
 
     if (tid == 0) {
         ix = static_cast<int>(ii[m]);
-        jx = (neigh_id < 3) ? ix - neigh_id - 1 : ix + neigh_id;
+        jx = (neigh_id < 3) ? ix - neigh_id - 1 : ix + neigh_id - 2; // droid-slam impl: ix - neigh_id - 1 : ix + neigh_id 
         fx = intr[0];
         fy = intr[1];
         cx = intr[2];
