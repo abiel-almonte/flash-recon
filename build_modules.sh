@@ -7,4 +7,3 @@ pip install --no-build-isolation -e /workspace/geometry/ \
 
 pip install --no-build-isolation -e /workspace/neural/ \
 && pybind11-stubgen neural_cuda.corr -o /workspace/neural/src
-
