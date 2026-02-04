@@ -13,6 +13,7 @@ RUN pip install --upgrade pip \
 && pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128 \
 && pip install pybind11 pybind11-stubgen black \
 && pip install opencv-python \
+&& pip install --no-build-isolation https://github.com/abiel-almonte/visionrt/releases/download/v1.0.0/visionrt-0.1.0-cp312-cp312-linux_x86_64.whl \
 && pip install --no-build-isolation git+https://github.com/princeton-vl/lietorch.git \
 && pip install --no-build-isolation torch-scatter
 
