@@ -10,3 +10,4 @@ from .ba import (
     disp_retr,
     wq_retr,
 )
+from .factor_graph import add_frontend_proximity_factors

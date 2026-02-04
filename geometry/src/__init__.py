@@ -12,6 +12,8 @@ from .lie import (
     matrix_to_pose,
 )
 
+from .utils import get_meshgrid
+
 __all__ = [
     "Pose",
     "Tangent",
@@ -30,4 +32,5 @@ __all__ = [
     "pose_retraction",
     "pose_to_matrix",
     "matrix_to_pose",
+    "get_meshgrid"
 ]

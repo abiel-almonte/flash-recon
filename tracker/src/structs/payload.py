@@ -39,3 +39,35 @@ class OptimizationPayload:
     lm: Optional[float] = None
     ep: Optional[float] = None
     alpha: Optional[float] = None
+
+
+@dataclass
+class BufferPayload:
+    count: Optional[int] = None
+
+    poses: Optional[object] = None
+    disps: Optional[object] = None
+    intrinsics: Optional[object] = None
+
+    fmaps: Optional[object] = None
+    nets: Optional[object] = None
+    inps: Optional[object] = None
+
+
+@dataclass
+class ProximityPayload:
+
+    role: CallerRole
+
+    buffer_payload: Optional[BufferPayload] = None
+    dist: Optional[object] = None
+    t0_loop: Optional[int] = None
+
+    t0: int = 0
+    t1: int = 0
+    rad: int = 2
+    nms: int = 2
+    thresh: float = 16.0
+    max_factors: int = -1
+    remove: bool = False
+    loop: bool = False
