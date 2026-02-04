@@ -61,4 +61,16 @@ PYBIND11_MODULE(proj, m) {
         py::arg("jj"),
         "Fused projective transform with jacobians"
     );
+
+    m.def(
+        "fused_depth_filter_cuda",
+        &fused_depth_filter_cuda,
+        py::arg("t"),
+        py::arg("q"),
+        py::arg("disps"),
+        py::arg("intrinsics"),
+        py::arg("ii"),
+        py::arg("thresh"),
+        "Count number of neighboring depths are consistent"
+    );
 }
