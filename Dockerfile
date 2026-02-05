@@ -11,7 +11,9 @@ RUN apt update && apt install -y \
     wget \
     curl \
     unzip \
-    git
+    git \ 
+    libgl1 \ 
+    libglib2.0-0
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 RUN git config --global --add safe.directory /workspace
