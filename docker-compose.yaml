@@ -1,6 +1,7 @@
 services:
   flash-recon:
     container_name: flash-recon
+    image: flash-recon:latest
     build:
       context: .
     working_dir: /workspace
