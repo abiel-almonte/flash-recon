@@ -163,9 +163,9 @@ requires-dist = [
     { name = "neural", marker = "extra == 'flash-recon'", directory = "neural" },
     { name = "opencv-python" },
     { name = "torch", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torch-scatter", marker = "extra == 'droid-slam'" },
+    { name = "torch-scatter", marker = "extra == 'droid-slam'", git = "https://github.com/rusty1s/pytorch_scatter.git" },
     { name = "torchvision", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "visionrt", marker = "extra == 'flash-recon'", url = "https://github.com/abiel-almonte/visionrt/releases/download/v1.0.0/visionrt-0.1.0-cp313-cp313-linux_x86_64.whl" },
+    { name = "visionrt", marker = "extra == 'flash-recon'", git = "https://github.com/abiel-almonte/visionrt.git" },
 ]
 provides-extras = ["droid-slam", "flash-recon"]
 
@@ -836,8 +836,7 @@ wheels = [
 [[package]]
 name = "torch-scatter"
 version = "2.1.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f5/ab/2a44ecac0f891dd0d765fc59ac8d277c6283a31907626560e72685df2ed6/torch_scatter-2.1.2.tar.gz", hash = "sha256:69b3aa435f2424ac6a1bfb6ff702da6eb73b33ca0db38fb26989c74159258e47", size = 108045, upload-time = "2023-10-06T08:49:07.081Z" }
+source = { git = "https://github.com/rusty1s/pytorch_scatter.git#648dda3cf964731ffb4de11eafc445a83133eda4" }
 
 [[package]]
 name = "torchvision"
@@ -898,7 +897,7 @@ wheels = [
 [[package]]
 name = "visionrt"
 version = "0.1.0"
-source = { url = "https://github.com/abiel-almonte/visionrt/releases/download/v1.0.0/visionrt-0.1.0-cp313-cp313-linux_x86_64.whl" }
+source = { git = "https://github.com/abiel-almonte/visionrt.git#fc01d690f0a43bdbc7920a380ef978b092414d10" }
 dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
@@ -908,19 +907,4 @@ dependencies = [
     { name = "seaborn" },
     { name = "torch" },
     { name = "torchvision" },
-]
-wheels = [
-    { url = "https://github.com/abiel-almonte/visionrt/releases/download/v1.0.0/visionrt-0.1.0-cp313-cp313-linux_x86_64.whl", hash = "sha256:86a0ef7ff3cf8a1a9f8f86519f15393a0b7ccdcdff7d2040f51fbf599fa9166c" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "matplotlib" },
-    { name = "numpy", specifier = "==2.1.2" },
-    { name = "nvtx" },
-    { name = "opencv-python", specifier = "==4.10.0.84" },
-    { name = "optuna" },
-    { name = "seaborn" },
-    { name = "torch", specifier = "==2.8.0" },
-    { name = "torchvision", specifier = "==0.23.0" },
 ]
