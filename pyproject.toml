@@ -1,0 +1,56 @@
+[project]
+name = "flash-recon"
+version = "0.1.0"
+description = "Accelerating video odometry"
+readme = "README.md"
+requires-python = "==3.13.*"
+dependencies = [
+    "torch",
+    "torchvision",
+    "opencv-python",
+]
+
+[tool.uv.sources]
+torch = { index = "torch-cuda" }
+torchvision = { index = "torch-cuda" }
+
+[[tool.uv.index]]
+name = "torch-cuda"
+url = "https://download.pytorch.org/whl/cu128"
+
+[tool.uv.extra-build-dependencies]
+geometry = ["torch"]
+neural = ["torch"]
+
+[tool.uv]
+no-build-isolation-package = [
+    "torch-scatter",
+    "lietorch",
+    "visionrt",
+]
+
+[project.optional-dependencies]
+droid-slam = [
+    "torch-scatter @ git+https://github.com/rusty1s/pytorch_scatter.git",
+    "lietorch @ git+https://github.com/princeton-vl/lietorch.git",
+]
+
+flash-recon = [
+    "geometry @ /workspace/geometry",
+    "neural @ /workspace/neural",
+    "visionrt @ git+https://github.com/abiel-almonte/visionrt.git",
+]
+
+[dependency-groups]
+dev = [
+    "black",
+    "pybind11",
+    "pybind11-stubgen",
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["flash_recon*"]

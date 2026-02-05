@@ -1,6 +1,6 @@
 import torch
 
-from structs import Pose, Intrinsics
+from .structs import Pose, Intrinsics
 from .utils import (
     projective_transform_jac_fused,
     projective_transform_fused,

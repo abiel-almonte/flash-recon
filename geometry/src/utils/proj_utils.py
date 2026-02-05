@@ -1,7 +1,7 @@
 import functools
 import torch
 
-from structs import Pose, Intrinsics
+from ..structs import Pose, Intrinsics
 
 from geometry_cuda.proj import (
     proj_cuda,
