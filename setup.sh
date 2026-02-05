@@ -55,7 +55,7 @@ try:
     frame = next(camera)
 except Exception as e:
     print(f\"Camera test failed: {e}\")
-    exit()
+    exit(1)
 
 print(\"Camera test succeeded\")
 
@@ -63,7 +63,7 @@ try:
     out = model(frame)
 except Exception as e:
     print(f\"GPU test failed: {e}\")
-    exit()
+    exit(1)
 
 print(\"GPU test succeeded\")
 
