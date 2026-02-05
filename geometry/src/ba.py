@@ -1,7 +1,7 @@
 import torch
 
-from structs import Pose, Tangent, Intrinsics
-from utils import (
+from .structs import Pose, Tangent, Intrinsics
+from .utils import (
     assemble_scale_shift_sys,
     assemble_full_sys,
     assemble_motion_only_sys,

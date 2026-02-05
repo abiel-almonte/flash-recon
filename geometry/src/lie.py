@@ -1,7 +1,7 @@
 import torch
 
-from structs import Pose, Tangent
-from utils import get_sign, get_eye4
+from .structs import Pose, Tangent
+from .utils import get_sign, get_eye4
 
 from geometry_cuda.lie import (
     se3_log_cuda,
