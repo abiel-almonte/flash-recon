@@ -8,9 +8,8 @@ def test(module_name):
         mod = __import__(module_name)
     except ImportError as e:
         print(f\"{module_name}: {e}\")
-        return False
+        exit(1)
     print(f\"{module_name}: ok\")
-    return True
 
 print()
 test(\"torch\")
