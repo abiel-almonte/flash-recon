@@ -3,6 +3,7 @@
 
 *.so
 *.egg-info
+*.pt
 
 **/__pycache__
 **/build
