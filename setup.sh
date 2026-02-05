@@ -54,7 +54,7 @@ try:
     camera = Camera(\"/dev/mapping-cam\", deterministic=True)
     frame = next(camera)
 except Exception as e:
-    print(\"Camera test failed: {e}\")
+    print(f\"Camera test failed: {e}\")
     exit()
 
 print(\"Camera test succeeded\")
