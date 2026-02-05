@@ -1,6 +1,6 @@
 import torch
 
-from structs import Pose, Intrinsics
+from ..structs import Pose, Intrinsics
 
 from geometry_cuda.ba import (
     fused_projective_transform_with_reduction_cuda,

@@ -1,5 +1,9 @@
 .vscode
+.venv
+
 *.so
+*.egg-info
+*.pt
+
 **/__pycache__
 **/build
-*.pt
