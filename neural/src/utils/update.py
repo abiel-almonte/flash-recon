@@ -47,7 +47,7 @@ class UpdateModule(nn.Module):
         device = net.device
 
         if flow is None:
-            flow = torch.zeros(batch, num, 4, ht, wd, device=device)
+            flow = torch.zeros(batch, num, 4, ht, wd, device=device, dtype=net.dtype)
 
         out_dim = (batch, num, -1, ht, wd)
 

@@ -10,7 +10,7 @@ class DroidNet(nn.Module):
         super(DroidNet, self).__init__()
         self.fnet = BasicEncoder(out_dim=128, norm_fn="instance")
         self.cnet = BasicEncoder(out_dim=256, norm_fn="none")
-        self.update = UpdateModule()
+        self.update = UpdateModule().half()
 
         self._load_weights(cfg["weights"]["droid"])
 
@@ -40,4 +40,7 @@ class DroidNet(nn.Module):
         return DroidNet._apply_module(self.cnet, inputs)
 
     def apply_update(self, *inputs):
-        return DroidNet._apply_module(self.update, inputs)
+        outputs_b = DroidNet._apply_module(self.update, tuple(x.half() for x in inputs))
+        if isinstance(outputs_b, tuple):
+            return tuple(o.float() for o in outputs_b)
+        return outputs_b.float()
