@@ -3,7 +3,7 @@ import torch
 from geometry import get_meshgrid, projective_transform
 from neural import CorrBlock
 
-from .structs import EdgeRequest, BufferSnapshot, EdgeStrategy
+from .structs import BufferSnapshot, EdgeRequest, EdgeStrategy
 
 
 class FactorGraph:
@@ -104,7 +104,7 @@ class FactorGraph:
         self.jj[self.jj >= ix] -= 1
         self.remove_factors(m, store_inac=False)
 
-    def add_factors(self, ii, jj, buffer_payload: BufferPayload, remove=False):
+    def add_factors(self, ii, jj, buffer: BufferSnapshot, remove=False):
         """add edges to factor graph"""
 
         ii, jj = self._remove_duplicates(ii, jj)
@@ -126,9 +126,9 @@ class FactorGraph:
                 self.remove_factors(remove_mask, store_inac=True)
 
         target, _ = projective_transform(
-            buffer_payload.poses,
-            buffer_payload.disps,
-            buffer_payload.intrinsics,
+            buffer.poses,
+            buffer.disps,
+            buffer.intrinsics,
             ii.contiguous(),
             jj.contiguous(),
             jacobian=False,
@@ -141,24 +141,24 @@ class FactorGraph:
         self.target = torch.cat([self.target, target], dim=0)
         self.weight = torch.cat([self.weight, weight], dim=0)
 
-        fmap1 = buffer_payload.fmaps[ii, 0]
-        c = (ii == jj).long().clamp(max=buffer_payload.fmaps.size(1) - 1)
-        fmap2 = buffer_payload.fmaps[jj, c]
+        fmap1 = buffer.fmaps[ii, 0]
+        c = (ii == jj).long().clamp(max=buffer.fmaps.size(1) - 1)
+        fmap2 = buffer.fmaps[jj, c]
         self.corr.build_pyramid(fmap1, fmap2)
 
-        net = buffer_payload.nets[ii]
+        net = buffer.nets[ii]
         if self.net is None:
             self.net = net
         else:
             self.net = torch.cat([self.net, net], dim=0)
 
-        inp = buffer_payload.inps[ii]
+        inp = buffer.inps[ii]
         if self.inp is None:
             self.inp = inp
         else:
             self.inp = torch.cat([self.inp, inp], dim=0)
 
-    def add_neighborhood_factors(self, t0, t1, buffer_payload: BufferPayload):
+    def add_neighborhood_factors(self, t0, t1, buffer: BufferSnapshot):
         """add edges between neighboring frames within radius"""
 
         ix = torch.arange(t0, t1, device=self.device, dtype=torch.long)
@@ -168,12 +168,12 @@ class FactorGraph:
 
         keep = ((ii - jj).abs() > 0) & ((ii - jj).abs() <= self.radius)
 
-        self.add_factors(ii[keep], jj[keep], buffer_payload)
+        self.add_factors(ii[keep], jj[keep], buffer)
 
     def _add_frontend_proximity_factors(
         self,
         dist: torch.Tensor,
-        buffer_payload: BufferPayload,
+        buffer: BufferSnapshot,
         t0: int = 0,
         t1: int = 0,
         rad: int = 2,
@@ -183,7 +183,7 @@ class FactorGraph:
     ):
         """Add proximity-based edges"""
 
-        count = buffer_payload.count
+        count = buffer.count
         gpu_device = self.device
         cpu_device = torch.device("cpu")
         stride = count - t1
@@ -259,12 +259,12 @@ class FactorGraph:
             es, device=gpu_device, dtype=torch.long
         ).unbind(dim=-1)
 
-        self.add_factors(ii_new, jj_new, buffer_payload, remove)
+        self.add_factors(ii_new, jj_new, buffer, remove)
 
     def _add_backend_proximity_factors(
         self,
         dist: torch.Tensor,
-        buffer_payload,
+        buffer: BufferSnapshot,
         t0: int = 0,
         t1: int = 0,
         rad: int = 2,
@@ -365,7 +365,7 @@ class FactorGraph:
         ii_new, jj_new = torch.as_tensor(
             edges, device=gpu_device, dtype=torch.long
         ).unbind(dim=-1)
-        self.add_factors(ii_new, jj_new, buffer_payload, remove=True)
+        self.add_factors(ii_new, jj_new, buffer, remove=True)
 
         return len(self.ii)
 

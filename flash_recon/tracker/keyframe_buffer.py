@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from .structs import OptimizationPayload, CallerRole
+from .structs import BAContext, BufferSnapshot, BAType
 from geometry import (
     Pose,
     Intrinsics,
@@ -210,7 +210,7 @@ class KeyFrameBuffer:
 
         self.set_needs_update(slice(0, self._count))
 
-    def create_dspo_payload(self, role: CallerRole) -> OptimizationPayload:
+    def create_ba_context(self, type: BAType) -> BAContext:
         T = self._count
         if T == 0:
             raise RuntimeError("Buffer is empty")
@@ -218,8 +218,8 @@ class KeyFrameBuffer:
         poses = self._poses[:T]
         disps = self._disps[:T]
 
-        if role == CallerRole.FRONTEND:
-            mono_disps = self._mono_disps[:T]
+        if type == BAType.DEPTH_SCALE:
+            mono_depths = self._mono_depths[:T]
 
             self.update_vmask(up=False)
             vmask = self._valid_depth_mask_small[:T]
@@ -228,8 +228,8 @@ class KeyFrameBuffer:
             scales = self._scales[:T]
             shifts = self._shifts[:T]
 
-            payload = OptimizationPayload(
-                role=role,
+            ctx = BAContext(
+                type=type,
                 poses=poses,
                 disps=disps,
                 intrinsics=self._intrinsics,
@@ -240,38 +240,51 @@ class KeyFrameBuffer:
                 iters=self.iters,
                 ignore_frames=self.ignore_frames,
             )
-        elif role == CallerRole.BACKEND:
-            payload = OptimizationPayload(
-                role=role,
+        elif type == BAType.POSE_DEPTH:
+            ctx = BAContext(
+                type=type,
                 poses=poses,
                 disps=disps,
                 intrinsics=self._intrinsics,
                 iters=self.iters,
                 n=T,
             )
-        elif role == CallerRole.TRAJ_FILLER:
-            payload = OptimizationPayload(
-                role=role,
+        elif type == BAType.MOTION_ONLY:
+            ctx = BAContext(
+                type=type,
                 poses=poses,
                 disps=disps,
                 intrinsics=self._intrinsics,
                 iters=self.iters,
             )
 
-        return payload
+        return ctx
 
-    def update_from_dspo_payload(self, payload: OptimizationPayload):
+    def apply_ba_result(self, ctx: BAContext):
         T = self._count
 
-        self._poses[:T] = payload.poses
-        self._disps[:T] = payload.disps
+        self._poses[:T] = ctx.poses
+        self._disps[:T] = ctx.disps
 
-        if payload.scales is not None:
-            self._scales[:T] = payload.scales
-        if payload.shifts is not None:
-            self._shifts[:T] = payload.shifts
+        if ctx.scales is not None:
+            self._scales[:T] = ctx.scales
+        if ctx.shifts is not None:
+            self._shifts[:T] = ctx.shifts
 
         self.set_needs_update(slice(0, T))
+    
+
+    @property
+    def snapshot(self):
+        return BufferSnapshot(
+            count=self._count,
+            poses=self._poses,
+            disps=self._disps,
+            intrinsics=self._intrinsics,
+            fmaps=self.fmaps,
+            nets=self.nets,
+            inps=self.inps,
+        )
 
     def __len__(self):
         return self._count
