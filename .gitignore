@@ -5,5 +5,7 @@
 *.egg-info
 *.pt
 
+/datasets
+
 **/__pycache__
 **/build
