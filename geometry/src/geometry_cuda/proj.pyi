@@ -15,6 +15,19 @@ __all__: list[str] = [
     "proj_jac_cuda",
 ]
 
+def frame_distance_cuda(
+    t: torch.Tensor,
+    q: torch.Tensor,
+    disps: torch.Tensor,
+    intrinsics: torch.Tensor,
+    ii: torch.Tensor,
+    jj: torch.Tensor,
+    beta: float,
+) -> torch.Tensor:
+    """
+    Compute reprojection-based frame distance
+    """
+
 def fused_depth_filter_cuda(
     t: torch.Tensor,
     q: torch.Tensor,
@@ -75,17 +88,4 @@ def proj_jac_cuda(
 ) -> torch.Tensor:
     """
     Jacobian of projection
-    """
-
-def frame_distance_cuda(
-    t: torch.Tensor,
-    q: torch.Tensor,
-    disps: torch.Tensor,
-    intrinsics: torch.Tensor,
-    ii: torch.Tensor,
-    jj: torch.Tensor,
-    beta: float,
-) -> torch.Tensor:
-    """
-    Compute reprojection-based frame distance
     """

@@ -80,7 +80,9 @@ def compute_distance(
     dist = frame_distance_fused(poses, disps, intrinsics, ii_flat, jj_flat, beta)
 
     if bidirectional:
-        dist_rev = frame_distance_fused(poses, disps, intrinsics, jj_flat, ii_flat, beta)
+        dist_rev = frame_distance_fused(
+            poses, disps, intrinsics, jj_flat, ii_flat, beta
+        )
         dist = 0.5 * (dist + dist_rev)
 
     if matrix_mode:
