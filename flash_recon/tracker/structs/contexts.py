@@ -1,14 +1,12 @@
 from dataclasses import dataclass
 from typing import Optional
-from .roles import CallerRole
+from .enums import EdgeStrategy, BAType
 
 
 @dataclass
-class OptimizationPayload:
-    """Payload containing all data needed for bundle adjustment optimization."""
-
-    # Caller role
-    role: CallerRole
+class BAContext:
+    # ba type
+    type: BAType
 
     # Core optimization data
     target: Optional[object] = None
@@ -42,7 +40,7 @@ class OptimizationPayload:
 
 
 @dataclass
-class BufferPayload:
+class BufferSnapshot:
     count: Optional[int] = None
 
     poses: Optional[object] = None
@@ -55,11 +53,11 @@ class BufferPayload:
 
 
 @dataclass
-class ProximityPayload:
+class EdgeRequest:
 
-    role: CallerRole
+    strategy: EdgeStrategy
 
-    buffer_payload: Optional[BufferPayload] = None
+    buffer: Optional[BufferSnapshot] = None
     dist: Optional[object] = None
     t0_loop: Optional[int] = None
 
