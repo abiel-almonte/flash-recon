@@ -94,9 +94,7 @@ class FactorGraph:
         if self.inp is not None:
             self.inp = self.inp[keep]
 
-    def remove_keyframe(self, ix):
-        """drop edges from factor graph"""
-
+    def remove_edge(self, ix):
         m = (self.ii_inac == ix) | (self.jj_inac == ix)
 
         self.ii_inac[self.ii_inac >= ix] -= 1
