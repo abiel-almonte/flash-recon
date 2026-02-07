@@ -28,7 +28,9 @@ class GraphAgg(nn.Module):
 
         n_unique = ix.max() + 1
         ix_exp = ix.view(1, -1, 1, 1, 1).expand_as(net)
-        out = torch.zeros(batch, n_unique, 128, ht, wd, device=net.device, dtype=net.dtype)
+        out = torch.zeros(
+            batch, n_unique, 128, ht, wd, device=net.device, dtype=net.dtype
+        )
         out.scatter_reduce_(1, ix_exp, net, reduce="mean", include_self=False)
         net = out.view(-1, 128, ht, wd)
 

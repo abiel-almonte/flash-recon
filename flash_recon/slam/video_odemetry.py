@@ -12,10 +12,15 @@ from .structs import BAType
 
 
 class _Noop:
-    def __enter__(self): return self
-    def __exit__(self, *args): pass
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
 
 _noop = _Noop()
+
 
 class _Timer:
     def __init__(self, enabled=False):
