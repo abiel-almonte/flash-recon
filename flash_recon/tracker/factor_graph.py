@@ -85,8 +85,7 @@ class FactorGraph:
         self.target = self.target[keep]
         self.weight = self.weight[keep]
 
-        if self.corr is not None:
-            self.corr = self.corr[keep]
+        self.corr = self.corr[keep]
 
         if self.net is not None:
             self.net = self.net[keep]
