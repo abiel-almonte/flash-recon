@@ -1,11 +1,7 @@
 #pragma once
 
-#include <torch/torch.h>
+#include <torch/extension.h>
 #include <cuda_runtime.h>
-
-#include <pybind11/pybind11.h>
-
-namespace py = pybind11;
 
 #define CHECK_DEVICE(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
