@@ -13,8 +13,9 @@ Tensor corr_forward(
     const Tensor coords, // [T, 2 H, W]
     const int radius
 );
+template <typename scalar_t>
 __global__ void corr_forward_kernel(
-    const PackedAccessor<float, 5> volume,
+    const PackedAccessor<scalar_t, 5> volume,
     const PackedAccessor<float, 4> coords,
     PackedAccessor<float, 5> corr_out,
     const int r
@@ -55,7 +56,7 @@ __global__ void corr_forward_kernel(
             const int y1 = fy - r + j;
 
             if (within_bounds(y1, x1, h2, w2)) {
-                float s = volume[n][y][x][y1][x1];
+                float s = (float)volume[n][y][x][y1][x1];
 
                 if (i > 0 && j > 0)
                     corr_out[n][i - 1][j - 1][y][x] += s * w00;

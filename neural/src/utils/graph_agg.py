@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from torch_scatter import scatter_mean
 
 
 class GraphAgg(nn.Module):
@@ -27,8 +26,13 @@ class GraphAgg(nn.Module):
         net = self.relu(self.conv1(net))
         net = net.view(batch, num, 128, ht, wd)
 
-        net = scatter_mean(net, ix, dim=1)
-        net = net.view(-1, 128, ht, wd)
+        n_unique = ix.max() + 1
+        ix_exp = ix.view(1, -1, 1, 1, 1).expand_as(net)
+        out = torch.zeros(
+            batch, n_unique, 128, ht, wd, device=net.device, dtype=net.dtype
+        )
+        out.scatter_reduce_(1, ix_exp, net, reduce="mean", include_self=False)
+        net = out.view(-1, 128, ht, wd)
 
         net = self.relu(self.conv2(net))
         eta = self.eta(net).view(batch, -1, ht, wd)

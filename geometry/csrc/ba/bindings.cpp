@@ -21,7 +21,7 @@ PYBIND11_MODULE(ba, m) {
         "fused_depth_jacobians_cuda",
         &fused_depth_jacobians_cuda, 
         py::arg("disps"),
-        py::arg("mono_disps"),
+        py::arg("mono_depths"),
         py::arg("valid_depth"),
         py::arg("scales"),
         py::arg("shifts"),

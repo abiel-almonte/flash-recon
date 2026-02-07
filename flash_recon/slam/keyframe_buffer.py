@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from .structs import OptimizationPayload, CallerRole
+from .structs import BAContext, BufferSnapshot, BAType
 from geometry import (
     Pose,
     Intrinsics,
@@ -39,7 +39,7 @@ class KeyFrameBuffer:
         self._intrinsics: Intrinsics = Intrinsics(fx, fy, cx, cy, device=self.device)
         self._disps = torch.ones(self.capacity, ht, wd, device=self.device)
         self._disps_up = torch.zeros(self.capacity, H_out, W_out, device=self.device)
-        self._mono_disps = torch.zeros(self.capacity, ht, wd, device=self.device)
+        self._mono_depths = torch.zeros(self.capacity, ht, wd, device=self.device)
         self._scales = torch.zeros(self.capacity, device=self.device)
         self._shifts = torch.zeros(self.capacity, device=self.device)
         self._valid_depth_mask = torch.zeros(
@@ -89,9 +89,9 @@ class KeyFrameBuffer:
 
     def append(
         self,
-        pose: Pose,
-        disp: torch.Tensor,
-        mono_disp: torch.Tensor = None,
+        pose: Pose = None,
+        disp: torch.Tensor = None,
+        mono_depth: torch.Tensor = None,
         fmap: torch.Tensor = None,
         net: torch.Tensor = None,
         inp: torch.Tensor = None,
@@ -101,12 +101,14 @@ class KeyFrameBuffer:
         if idx >= self.capacity:
             raise RuntimeError("KeyFrameBuffer capacity exceeded")
 
-        self._poses[idx] = pose
-        self._disps[idx] = disp
-        self._valid_depth_mask_small[idx] = disp > 0
+        if pose is not None:
+            self._poses[idx] = pose
+        if disp is not None:
+            self._disps[idx] = disp
+        self._valid_depth_mask_small[idx] = self._disps[idx] > 0
 
-        if mono_disp is not None:
-            self._mono_disps[idx] = mono_disp
+        if mono_depth is not None:
+            self._mono_depths[idx] = mono_depth
         if fmap is not None:
             self.fmaps[idx] = fmap
         if net is not None:
@@ -116,6 +118,35 @@ class KeyFrameBuffer:
 
         self.needs_update[idx] = True
         self._count += 1
+
+    def propagate(self):
+        idx = self._count
+        if idx > 0 and idx < self.capacity:
+            self._poses[idx] = self._poses[idx - 1]
+            self._disps[idx] = self._disps[idx - 1].mean()
+
+    def remove(self, idx: int) -> None:
+        if idx < 0 or idx >= self._count:
+            raise IndexError(f"Index {idx} out of range [0, {self._count})")
+
+        if idx < self._count - 1:
+            src = slice(idx + 1, self._count)
+            dst = slice(idx, self._count - 1)
+
+            self._poses[dst] = self._poses[src]
+            self._disps[dst] = self._disps[src]
+            self._disps_up[dst] = self._disps_up[src]
+            self._mono_depths[dst] = self._mono_depths[src]
+            self._scales[dst] = self._scales[src]
+            self._shifts[dst] = self._shifts[src]
+            self._valid_depth_mask[dst] = self._valid_depth_mask[src]
+            self._valid_depth_mask_small[dst] = self._valid_depth_mask_small[src]
+            self.needs_update[dst] = self.needs_update[src]
+            self.fmaps[dst] = self.fmaps[src]
+            self.nets[dst] = self.nets[src]
+            self.inps[dst] = self.inps[src]
+
+        self._count -= 1
 
     def update_scale_shift(
         self,
@@ -210,7 +241,7 @@ class KeyFrameBuffer:
 
         self.set_needs_update(slice(0, self._count))
 
-    def create_dspo_payload(self, role: CallerRole) -> OptimizationPayload:
+    def create_ba_context(self, type: BAType) -> BAContext:
         T = self._count
         if T == 0:
             raise RuntimeError("Buffer is empty")
@@ -218,60 +249,72 @@ class KeyFrameBuffer:
         poses = self._poses[:T]
         disps = self._disps[:T]
 
-        if role == CallerRole.FRONTEND:
-            mono_disps = self._mono_disps[:T]
+        if type == BAType.DEPTH_SCALE:
+            mono_depths = self._mono_depths[:T]
 
             self.update_vmask(up=False)
             vmask = self._valid_depth_mask_small[:T]
 
-            self.update_scale_shift(mono_disps, disps, vmask)
+            self.update_scale_shift(mono_depths, disps, vmask)
             scales = self._scales[:T]
             shifts = self._shifts[:T]
 
-            payload = OptimizationPayload(
-                role=role,
+            ctx = BAContext(
+                type=type,
                 poses=poses,
                 disps=disps,
                 intrinsics=self._intrinsics,
-                mono_disps=mono_disps,
+                mono_depths=mono_depths,
                 scales=scales,
                 shifts=shifts,
                 valid_depth_mask=vmask,
                 iters=self.iters,
                 ignore_frames=self.ignore_frames,
             )
-        elif role == CallerRole.BACKEND:
-            payload = OptimizationPayload(
-                role=role,
+        elif type == BAType.POSE_DEPTH:
+            ctx = BAContext(
+                type=type,
                 poses=poses,
                 disps=disps,
                 intrinsics=self._intrinsics,
                 iters=self.iters,
                 n=T,
             )
-        elif role == CallerRole.TRAJ_FILLER:
-            payload = OptimizationPayload(
-                role=role,
+        elif type == BAType.MOTION_ONLY:
+            ctx = BAContext(
+                type=type,
                 poses=poses,
                 disps=disps,
                 intrinsics=self._intrinsics,
                 iters=self.iters,
             )
 
-        return payload
+        return ctx
 
-    def update_from_dspo_payload(self, payload: OptimizationPayload):
+    def apply_ba_result(self, ctx: BAContext):
         T = self._count
 
-        self._poses[:T] = payload.poses
-        self._disps[:T] = payload.disps
+        self._poses[:T] = ctx.poses
+        self._disps[:T] = ctx.disps
 
-        if payload.scales is not None:
-            self._scales[:T] = payload.scales
-        if payload.shifts is not None:
-            self._shifts[:T] = payload.shifts
+        if ctx.scales is not None:
+            self._scales[:T] = ctx.scales
+        if ctx.shifts is not None:
+            self._shifts[:T] = ctx.shifts
 
         self.set_needs_update(slice(0, T))
+
+    @property
+    def snapshot(self):
+        return BufferSnapshot(
+            count=self._count,
+            poses=self._poses,
+            disps=self._disps,
+            intrinsics=self._intrinsics,
+            fmaps=self.fmaps,
+            nets=self.nets,
+            inps=self.inps,
+        )
 
     def __len__(self):
         return self._count

@@ -14,7 +14,7 @@ __all__: list[str] = [
 
 def fused_depth_jacobians_cuda(
     disps: torch.Tensor,
-    mono_disps: torch.Tensor,
+    mono_depths: torch.Tensor,
     valid_depth: torch.Tensor,
     scales: torch.Tensor,
     shifts: torch.Tensor,
