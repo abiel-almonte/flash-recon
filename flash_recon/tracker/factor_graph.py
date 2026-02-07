@@ -57,7 +57,9 @@ class FactorGraph:
         if curr_ii.numel() == 0:
             return ii, jj
 
-        all_max = max(curr_ii.max().item(), curr_jj.max().item(), ii.max().item(), jj.max().item())
+        all_max = max(
+            curr_ii.max().item(), curr_jj.max().item(), ii.max().item(), jj.max().item()
+        )
         encoding_stride = all_max + 1
 
         edges = ii * encoding_stride + jj
@@ -198,7 +200,7 @@ class FactorGraph:
         ix = torch.arange(t0, count)
         jx = torch.arange(t1, count)
 
-        ii, jj = torch.meshgrid(ix, jx,indexing="ij")
+        ii, jj = torch.meshgrid(ix, jx, indexing="ij")
         ii = ii.flatten()
         jj = jj.flatten()
 
@@ -306,7 +308,9 @@ class FactorGraph:
 
         edges = []
         for i in range(t0_loop, t1):
-            for j in range(max(i - rad - 1, t0), i):  # droid-slam impl:  j in range(max(i - rad - 1, 0), i):
+            for j in range(
+                max(i - rad - 1, t0), i
+            ):  # droid-slam impl:  j in range(max(i - rad - 1, 0), i):
                 edges.append((i, j))
                 edges.append((j, i))
                 di = i - t0_loop

@@ -303,7 +303,6 @@ class KeyFrameBuffer:
             self._shifts[:T] = ctx.shifts
 
         self.set_needs_update(slice(0, T))
-    
 
     @property
     def snapshot(self):
