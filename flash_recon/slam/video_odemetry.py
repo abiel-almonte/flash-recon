@@ -14,6 +14,7 @@ class VideoOdometry:
     def __init__(self, cfg):
         self._droid = DroidNet(cfg)
         self._corr = CorrBlock(cfg)
+        self._motion_corr = CorrBlock(cfg)
         self._dspo = DSPOptimizer(cfg)
 
         H_out = int(cfg.get("cam", {}).get("H_out", 480))
@@ -32,9 +33,11 @@ class VideoOdometry:
         return fmap, net, inp
 
     def compute_motion(self, prev_fmap, fmap, net, inp):
-        self._corr.build_pyramid(prev_fmap, fmap)
-        corr = self._corr(self._coords0)
-        _, delta, _ = self._droid.apply_update(net, inp, corr)
+        corr = self._motion_corr
+        corr.pyramid = None
+        corr.build_pyramid(prev_fmap[:, [0]].float(), fmap[:, [0]].float())
+        feat = corr(self._coords0.unsqueeze(0))
+        _, delta, _ = self._droid.apply_update(net, inp, feat)
         return delta.norm(dim=-1).mean().item()
 
     def __call__(
