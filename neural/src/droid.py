@@ -38,7 +38,8 @@ class DroidNet(nn.Module):
         return DroidNet._apply_module(self.fnet, inputs)
 
     def apply_cnet(self, *inputs):
-        return DroidNet._apply_module(self.cnet, inputs)
+        x = DroidNet._apply_module(self.cnet, inputs)
+        return x.split([128, 128], dim=1)  # net, inp
 
     def apply_update(self, *inputs):
         outputs_b = DroidNet._apply_module(self.update, tuple(x.half() for x in inputs))
