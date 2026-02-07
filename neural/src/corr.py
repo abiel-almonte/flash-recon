@@ -27,6 +27,8 @@ class CorrBlock:
             Hi = corr.shape[-2]
             Wi = corr.shape[-1]
 
+            level = corr.view(T, ht, wd, Hi, Wi).half()
+
             if self.pyramid:
                 pyramid.append(
                     torch.cat([self.pyramid[i], corr.view(T, ht, wd, Hi, Wi)], dim=0)
