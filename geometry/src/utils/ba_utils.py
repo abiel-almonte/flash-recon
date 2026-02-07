@@ -27,7 +27,7 @@ def projective_transform_with_reduction(
 
 def depth_jacobians(
     disps: torch.Tensor,
-    mono_disps: torch.Tensor,
+    mono_depths: torch.Tensor,
     scales: torch.Tensor,
     shifts: torch.Tensor,
     depth_mask: torch.Tensor,
@@ -36,14 +36,14 @@ def depth_jacobians(
     indices: torch.Tensor,
 ):
     disps_i = disps[indices].contiguous()
-    mono_disps_i = mono_disps[indices].contiguous()
+    mono_depths_i = mono_depths[indices].contiguous()
     depth_mask_i = depth_mask[indices].contiguous()
     scales_i = scales[indices].contiguous()
     shifts_i = shifts[indices].contiguous()
     ignore_i = indices < frame_bound
 
     return fused_depth_jacobians_cuda(
-        disps_i, mono_disps_i, depth_mask_i, scales_i, shifts_i, ignore_i, alpha
+        disps_i, mono_depths_i, depth_mask_i, scales_i, shifts_i, ignore_i, alpha
     )
 
 
@@ -195,7 +195,7 @@ def assemble_scale_shift_sys(
     target: torch.Tensor,
     weight: torch.Tensor,
     damping: torch.Tensor,
-    mono_disps: torch.Tensor,
+    mono_depths: torch.Tensor,
     scales: torch.Tensor,
     shifts: torch.Tensor,
     vmask: torch.Tensor,
@@ -212,7 +212,7 @@ def assemble_scale_shift_sys(
 
     scale_shift_jac, depth_jac, depth_residual = depth_jacobians(
         disps,
-        mono_disps,
+        mono_depths,
         scales,
         shifts,
         vmask,

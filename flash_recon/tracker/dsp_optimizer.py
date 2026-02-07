@@ -86,7 +86,7 @@ class DSPOptimizer:
             payload.intrinsics,
             payload.ii,
             payload.jj,
-            payload.mono_disps,
+            payload.mono_depths,
             payload.scales,
             payload.shifts,
             payload.valid_depth_mask,

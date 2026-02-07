@@ -132,7 +132,7 @@ __global__ void fused_projective_transform_with_reduction_kernel(
 
 std::tuple<Tensor, Tensor, Tensor> fused_depth_jacobians_cuda(
     Tensor disps,
-    Tensor mono_disps,
+    Tensor mono_depths,
     Tensor valid_depth,
     Tensor scales,
     Tensor shifts,
@@ -141,7 +141,7 @@ std::tuple<Tensor, Tensor, Tensor> fused_depth_jacobians_cuda(
 );
 __global__ void fused_depth_jacobians_kernel(
     PackedAccessor<float, 3> disps,
-    PackedAccessor<float, 3> mono_disps,
+    PackedAccessor<float, 3> mono_depths,
     PackedAccessor<bool, 3> valid_depth,
     PackedAccessor<float, 1> scales,
     PackedAccessor<float, 1> shifts,
@@ -177,7 +177,7 @@ __global__ void fused_depth_jacobians_kernel(
         const bool is_valid_depth = valid_depth[e][i][j];
         
         const float Jd = (is_valid_depth)? sqrt_alpha10 : sqrt_alpha;
-        const float mono = mono_disps[e][i][j];
+        const float mono = mono_depths[e][i][j];
         const float disp = disps[e][i][j];
         
         const bool is_invalid = is_ignored || (mono < 1e-6f);

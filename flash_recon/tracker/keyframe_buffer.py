@@ -39,7 +39,7 @@ class KeyFrameBuffer:
         self._intrinsics: Intrinsics = Intrinsics(fx, fy, cx, cy, device=self.device)
         self._disps = torch.ones(self.capacity, ht, wd, device=self.device)
         self._disps_up = torch.zeros(self.capacity, H_out, W_out, device=self.device)
-        self._mono_disps = torch.zeros(self.capacity, ht, wd, device=self.device)
+        self._mono_depths = torch.zeros(self.capacity, ht, wd, device=self.device)
         self._scales = torch.zeros(self.capacity, device=self.device)
         self._shifts = torch.zeros(self.capacity, device=self.device)
         self._valid_depth_mask = torch.zeros(
@@ -91,7 +91,7 @@ class KeyFrameBuffer:
         self,
         pose: Pose,
         disp: torch.Tensor,
-        mono_disp: torch.Tensor = None,
+        mono_depth: torch.Tensor = None,
         fmap: torch.Tensor = None,
         net: torch.Tensor = None,
         inp: torch.Tensor = None,
@@ -105,8 +105,8 @@ class KeyFrameBuffer:
         self._disps[idx] = disp
         self._valid_depth_mask_small[idx] = disp > 0
 
-        if mono_disp is not None:
-            self._mono_disps[idx] = mono_disp
+        if mono_depth is not None:
+            self._mono_depths[idx] = mono_depth
         if fmap is not None:
             self.fmaps[idx] = fmap
         if net is not None:
@@ -224,7 +224,7 @@ class KeyFrameBuffer:
             self.update_vmask(up=False)
             vmask = self._valid_depth_mask_small[:T]
 
-            self.update_scale_shift(mono_disps, disps, vmask)
+            self.update_scale_shift(mono_depths, disps, vmask)
             scales = self._scales[:T]
             shifts = self._shifts[:T]
 
@@ -233,7 +233,7 @@ class KeyFrameBuffer:
                 poses=poses,
                 disps=disps,
                 intrinsics=self._intrinsics,
-                mono_disps=mono_disps,
+                mono_depths=mono_depths,
                 scales=scales,
                 shifts=shifts,
                 valid_depth_mask=vmask,

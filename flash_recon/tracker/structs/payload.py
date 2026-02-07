@@ -21,7 +21,7 @@ class OptimizationPayload:
     jj: Optional[object] = None
 
     # Scale-shift specific data
-    mono_disps: Optional[object] = None
+    mono_depths: Optional[object] = None
     scales: Optional[object] = None
     shifts: Optional[object] = None
     valid_depth_mask: Optional[object] = None
