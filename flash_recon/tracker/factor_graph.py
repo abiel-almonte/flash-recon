@@ -17,7 +17,6 @@ class FactorGraph:
 
         buffer_capacity = int(cfg.get("tracking", {}).get("buffer", 512))
         self.max_factors = int(cfg.get("tracking", {}).get("max_factors", -1))
-        self.radius = int(cfg.get("tracking", {}).get("frontend", {}).get("radius", 3))
         y, x = get_meshgrid(ht, wd, device=self.device, dtype=torch.float)
         self.coords0 = torch.stack([y, x], dim=-1)
         self.ii = torch.as_tensor([], device=self.device, dtype=torch.long)
@@ -49,8 +48,8 @@ class FactorGraph:
         self.weight = weight
         self.net = net
         self.damping[unique_ii] = damping
+
     def _remove_duplicates(self, ii, jj):
-        """remove duplicate edges"""
         curr_ii = torch.cat([self.ii, self.ii_inac], dim=0)
         curr_jj = torch.cat([self.jj, self.jj_inac], dim=0)
 
@@ -368,14 +367,12 @@ class FactorGraph:
             d = d.reshape(ilen, jlen)
 
         if len(edges) < 3 or (loop and loop_edges == 0):
-            return 0
+            return
 
         ii_new, jj_new = torch.as_tensor(
             edges, device=gpu_device, dtype=torch.long
         ).unbind(dim=-1)
         self.add_factors(ii_new, jj_new, buffer, remove=True)
-
-        return len(self.ii)
 
     def add_proximity_factors(self, request: EdgeRequest):
         if request.strategy == EdgeStrategy.LOCAL:
@@ -421,3 +418,6 @@ class FactorGraph:
         self.corr = None
         self.net = None
         self.inp = None
+
+    def __len__(self):
+        return len(self.ii)
