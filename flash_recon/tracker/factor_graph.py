@@ -3,7 +3,7 @@ import torch
 from geometry import get_meshgrid, projective_transform
 from neural import CorrBlock
 
-from .structs import CallerRole, BufferPayload, ProximityPayload
+from .structs import EdgeRequest, BufferSnapshot, EdgeStrategy
 
 
 class FactorGraph:
@@ -369,30 +369,30 @@ class FactorGraph:
 
         return len(self.ii)
 
-    def add_proximity_factors(self, payload: ProximityPayload):
-        if payload.role == CallerRole.FRONTEND:
-            self._add_frontend_proximity_factors(
-                dist=payload.dist,
-                buffer_payload=payload.buffer_payload,
-                t0=payload.t0,
-                t1=payload.t1,
-                rad=payload.rad,
-                nms=payload.nms,
-                thresh=payload.thresh,
-                remove=payload.remove,
+    def add_proximity_factors(self, request: EdgeRequest):
+        if request.strategy == EdgeStrategy.LOCAL:
+            self._add_local_proximity_factors(
+                dist=request.dist,
+                buffer=request.buffer,
+                t0=request.t0,
+                t1=request.t1,
+                rad=request.rad,
+                nms=request.nms,
+                thresh=request.thresh,
+                remove=request.remove,
             )
         else:
-            self._add_backend_proximity_factors(
-                dist=payload.dist,
-                buffer_payload=payload.buffer_payload,
-                t0=payload.t0,
-                t1=payload.t1,
-                rad=payload.rad,
-                nms=payload.nms,
-                thresh=payload.thresh,
-                max_factors=payload.max_factors,
-                t0_loop=payload.t0_loop,
-                loop=payload.loop,
+            self._add_global_proximity_factors(
+                dist=request.dist,
+                buffer=request.buffer,
+                t0=request.t0,
+                t1=request.t1,
+                rad=request.rad,
+                nms=request.nms,
+                thresh=request.thresh,
+                max_factors=request.max_factors,
+                t0_loop=request.t0_loop,
+                loop=request.loop,
             )
 
     def clear(self):
