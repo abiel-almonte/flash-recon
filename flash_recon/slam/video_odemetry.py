@@ -1,3 +1,4 @@
+import time
 import torch
 
 from neural import DroidNet
@@ -8,6 +9,54 @@ from .factor_graph import FactorGraph
 from .keyframe_buffer import KeyFrameBuffer
 from .dsp_optimizer import DSPOptimizer
 from .structs import BAType
+
+
+class _Noop:
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+
+_noop = _Noop()
+
+class _Timer:
+    def __init__(self, enabled=False):
+        self.enabled = enabled
+        self.totals = {}
+        self.counts = {}
+
+    def __call__(self, name):
+        if not self.enabled:
+            return _noop
+        return _TimerContext(self, name)
+
+    def summary(self):
+        if not self.enabled:
+            return "  (profiling disabled)"
+        lines = []
+        for name in self.totals:
+            total = self.totals[name]
+            count = self.counts[name]
+            avg = total / count if count else 0
+            lines.append(
+                f"  {name:20s}: {avg*1000:7.1f}ms avg ({count} calls, {total*1000:.0f}ms total)"
+            )
+        return "\n".join(lines)
+
+
+class _TimerContext:
+    def __init__(self, timer, name):
+        self.timer = timer
+        self.name = name
+
+    def __enter__(self):
+        torch.cuda.synchronize()
+        self.t0 = time.perf_counter()
+        return self
+
+    def __exit__(self, *args):
+        torch.cuda.synchronize()
+        dt = time.perf_counter() - self.t0
+        self.timer.totals[self.name] = self.timer.totals.get(self.name, 0) + dt
+        self.timer.counts[self.name] = self.timer.counts.get(self.name, 0) + 1
 
 
 class VideoOdometry:
@@ -26,11 +75,13 @@ class VideoOdometry:
         y, x = get_meshgrid(ht, wd, "cuda", torch.float)
 
         self._coords0 = torch.stack([x, y], dim=-1)
+        self.timer = _Timer(enabled=cfg.get("profile", False))
 
     @torch.inference_mode()
     def extract(self, frame):
-        fmap = self._droid.apply_fnet(frame)
-        net, inp = self._droid.apply_cnet(frame)
+        with self.timer("extract"):
+            fmap = self._droid.apply_fnet(frame)
+            net, inp = self._droid.apply_cnet(frame)
         return fmap, net, inp
 
     @torch.inference_mode()
@@ -57,20 +108,24 @@ class VideoOdometry:
             poses, disps, intrinsics = buffer.get_geometric_attrs()
             target, _, memory, context = graph.get_flow_attrs()
 
-            coords1, _ = projective_transform(
-                poses, disps, intrinsics, ii.reshape(-1), jj.reshape(-1)
-            )
-            motion = (
-                torch.cat([coords1 - graph.coords0, target - coords1], dim=-1)
-                .permute(0, 1, 4, 2, 3)
-                .clamp(-64.0, 64.0)
-            )
+            with self.timer("projective"):
+                coords1, _ = projective_transform(
+                    poses, disps, intrinsics, ii.reshape(-1), jj.reshape(-1)
+                )
+                motion = (
+                    torch.cat([coords1 - graph.coords0, target - coords1], dim=-1)
+                    .permute(0, 3, 1, 2)
+                    .clamp(-64.0, 64.0)
+                )
 
             # correlation features
-            correlation = graph.corr(coords1)
-            memory, delta, weight, damping, upmask = self._droid.apply_update(
-                context, memory, correlation, motion, ii, jj
-            )
+            with self.timer("corr"):
+                correlation = graph.corr(coords1.float())
+
+            with self.timer("update_net"):
+                memory, delta, weight, damping, upmask = self._droid.apply_update(
+                    context, memory, correlation, motion, ii, jj
+                )
             target = coords1 + delta
 
             # update factor graph state for next iteration
@@ -100,6 +155,7 @@ class VideoOdometry:
                 "iters": 2,
             }
 
-            ctx = buffer.create_ba_context(ba_type)
-            ctx = self._dspo(ctx, params)
-            buffer.apply_ba_result(ctx)
+            with self.timer("ba"):
+                ctx = buffer.create_ba_context(ba_type)
+                ctx = self._dspo(ctx, params)
+                buffer.apply_ba_result(ctx)
