@@ -5,10 +5,9 @@ from neural_cuda.corr import corr_forward
 
 
 class CorrBlock:
-
-    def __init__(self, num_levels: int = 4, radius: int = 3) -> None:
-        self.num_levels = num_levels
-        self.radius = radius
+    def __init__(self, cfg) -> None:
+        self.num_levels = int(cfg.get("corrblock", {}).get("num_levels", 4))
+        self.radius = int(cfg.get("corrblock", {}).get("radius", 3))
         self.pyramid = None
 
     def build_pyramid(
