@@ -6,6 +6,7 @@ from __future__ import annotations
 import torch
 
 __all__: list[str] = [
+    "frame_distance_cuda",
     "fused_depth_filter_cuda",
     "fused_induced_flow_cuda",
     "fused_projective_cuda",
@@ -74,4 +75,17 @@ def proj_jac_cuda(
 ) -> torch.Tensor:
     """
     Jacobian of projection
+    """
+
+def frame_distance_cuda(
+    t: torch.Tensor,
+    q: torch.Tensor,
+    disps: torch.Tensor,
+    intrinsics: torch.Tensor,
+    ii: torch.Tensor,
+    jj: torch.Tensor,
+    beta: float,
+) -> torch.Tensor:
+    """
+    Compute reprojection-based frame distance
     """
