@@ -1,13 +1,8 @@
 #pragma once
 
-#include <torch/torch.h>
+#include <torch/extension.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
-
-#include <pybind11/detail/common.h>
-#include <pybind11/pybind11.h>
-
-namespace py = pybind11;
 
 #define THREADS 256
 #define FULLMASK 0xffffffff
