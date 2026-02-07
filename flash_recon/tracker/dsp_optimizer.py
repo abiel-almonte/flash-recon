@@ -1,141 +1,120 @@
 from dataclasses import replace
 
-from geometry import full_ba, motion_only_ba, ba_scale_shift
-from .structs import OptimizationPayload, CallerRole
+from geometry import full_ba, ba_scale_shift, motion_only_ba
+from .structs import BAContext, BAType
 
 
 class DSPOptimizer:
     def __init__(self, cfg):
         optim_cfg = cfg.get("optim", {}) if isinstance(cfg, dict) else {}
-        self.ds_iters = optim_cfg.get("depth_scales_iters", 1)
-        self.pd_iters = optim_cfg.get("poses_depth_iters", 1)
         self.num_fixed_poses = optim_cfg.get("num_fixed_poses", 1)
         self.rig_size = optim_cfg.get("rig_size", 1)
         self.lm = optim_cfg.get("lm", 1e-4)
         self.ep = optim_cfg.get("ep", 0.1)
         self.alpha = optim_cfg.get("alpha", 0.05)
 
-    def _dispatcher(self, payload: OptimizationPayload) -> OptimizationPayload:
-        """Dispatch optimization schedule based on the caller role.
+    def _dispatcher(self, ctx: BAContext) -> BAContext:
+        """Dispatch optimization schedule based on the ba type.
 
-        caller: one of {"frontend", "backend", "traj_filler"}
+        ba type: {"pose_depth", "depth_scale", "motion_only"}
         """
-        iters = max(1, payload.iters)
-        role = payload.role if payload.role else CallerRole.BACKEND
+        iters = max(1, ctx.iters)
+        type = ctx.type if ctx.type else BAType.POSE_DEPTH
 
-        if role is CallerRole.FRONTEND:
-            for itr in range(iters):
-
-                if itr % 2 == 0:
-                    for _ in range(self.pd_iters):
-                        self._step_pose_depth(payload)
-                else:
-                    for _ in range(self.ds_iters):
-                        self._step_depth_scale(payload)
-
-        elif role is CallerRole.BACKEND:
+        if type is BAType.POSE_DEPTH:
             for _ in range(iters):
-
-                for _ in range(self.pd_iters):
-                    self._step_pose_depth(payload)
-
-                for _ in range(self.ds_iters):
-                    self._step_depth_scale(payload)
-
-        elif role is CallerRole.TRAJ_FILLER:
+                self._step_pose_depth(ctx)
+        
+        elif type is BAType.DEPTH_SCALE:
             for _ in range(iters):
-                self._step_motion_only(payload)
+                self._step_depth_scale(ctx)
 
-        else:
+        elif type is BAType.MOTION_ONLY:
             for _ in range(iters):
-                for _ in range(self.pd_iters):
-                    self._step_pose_depth(payload)
+                self._step_motion_only(ctx)
 
-                for _ in range(self.ds_iters):
-                    self._step_depth_scale(payload)
-
-        return payload
+        return ctx
 
     def __call__(
-        self, payload: OptimizationPayload, payload_overrides: dict = None
-    ) -> OptimizationPayload:
-        if payload_overrides:
-            payload = replace(payload, **payload_overrides)
+        self, ctx: BAContext, params: dict = None
+    ) -> BAContext:
+        if params:
+            ctx = replace(ctx, **params)
 
-        if payload.lm is None:
-            payload = replace(payload, lm=self.lm)
-        if payload.ep is None:
-            payload = replace(payload, ep=self.ep)
-        if payload.alpha is None:
-            payload = replace(payload, alpha=self.alpha)
-        if payload.num_fixed_poses is None:
-            payload = replace(payload, num_fixed_poses=self.num_fixed_poses)
-        if payload.rig_size is None:
-            payload = replace(payload, rig_size=self.rig_size)
+        if ctx.lm is None:
+            ctx = replace(ctx, lm=self.lm)
+        if ctx.ep is None:
+            ctx = replace(ctx, ep=self.ep)
+        if ctx.alpha is None:
+            ctx = replace(ctx, alpha=self.alpha)
+        if ctx.num_fixed_poses is None:
+            ctx = replace(ctx, num_fixed_poses=self.num_fixed_poses)
+        if ctx.rig_size is None:
+            ctx = replace(ctx, rig_size=self.rig_size)
 
-        return self._dispatcher(payload)
+        return self._dispatcher(ctx)
 
-    def _step_depth_scale(self, payload: OptimizationPayload) -> OptimizationPayload:
+    def _step_depth_scale(self, ctx: BAContext) -> BAContext:
         """Perform depth-scale optimization (full BA w/ scale shift)  step."""
         disps_out, scale_shift = ba_scale_shift(
-            payload.target,
-            payload.weight,
-            payload.eta,
-            payload.poses,
-            payload.disps,
-            payload.intrinsics,
-            payload.ii,
-            payload.jj,
-            payload.mono_depths,
-            payload.scales,
-            payload.shifts,
-            payload.valid_depth_mask,
-            payload.ignore_frames,
-            payload.lm,
-            payload.ep,
-            payload.alpha,
+            ctx.target,
+            ctx.weight,
+            ctx.eta,
+            ctx.poses,
+            ctx.disps,
+            ctx.intrinsics,
+            ctx.ii,
+            ctx.jj,
+            ctx.mono_depths,
+            ctx.scales,
+            ctx.shifts,
+            ctx.valid_depth_mask,
+            ctx.ignore_frames,
+            ctx.lm,
+            ctx.ep,
+            ctx.alpha,
         )
-        payload.disps = disps_out
-        payload.scales = scale_shift[:, 0]
-        payload.shifts = scale_shift[:, 1]
-        return payload
+        ctx.disps = disps_out
+        ctx.scales = scale_shift[:, 0]
+        ctx.shifts = scale_shift[:, 1]
+        return ctx
 
-    def _step_pose_depth(self, payload: OptimizationPayload) -> OptimizationPayload:
+    def _step_pose_depth(self, ctx: BAContext) -> BAContext:
         """Perform pose-depth (full BA) optimization step."""
         poses_out, disps_out = full_ba(
-            payload.target,
-            payload.weight,
-            payload.eta,
-            payload.poses,
-            payload.disps,
-            payload.intrinsics,
-            payload.ii,
-            payload.jj,
-            payload.n,
-            payload.lm,
-            payload.ep,
-            payload.alpha,
-            payload.num_fixed_poses,
-            payload.rig_size,
+            ctx.target,
+            ctx.weight,
+            ctx.eta,
+            ctx.poses,
+            ctx.disps,
+            ctx.intrinsics,
+            ctx.ii,
+            ctx.jj,
+            ctx.n,
+            ctx.lm,
+            ctx.ep,
+            ctx.alpha,
+            ctx.num_fixed_poses,
+            ctx.rig_size,
         )
-        payload.poses = poses_out
-        payload.disps = disps_out
-        return payload
+        ctx.poses = poses_out
+        ctx.disps = disps_out
+        return ctx
 
-    def _step_motion_only(self, payload: OptimizationPayload) -> OptimizationPayload:
+    def _step_motion_only(self, ctx: BAContext) -> BAContext:
         """Perform motion-only BA step (poses only)."""
         poses_out = motion_only_ba(
-            payload.target,
-            payload.weight,
-            payload.poses,
-            payload.disps,
-            payload.intrinsics,
-            payload.ii,
-            payload.jj,
-            payload.num_fixed_poses,
-            payload.rig_size,
-            payload.lm,
-            payload.ep,
+            ctx.target,
+            ctx.weight,
+            ctx.poses,
+            ctx.disps,
+            ctx.intrinsics,
+            ctx.ii,
+            ctx.jj,
+            ctx.num_fixed_poses,
+            ctx.rig_size,
+            ctx.lm,
+            ctx.ep,
         )
-        payload.poses = poses_out
-        return payload
+        ctx.poses = poses_out
+        return ctx
