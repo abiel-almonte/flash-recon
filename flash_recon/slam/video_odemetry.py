@@ -12,7 +12,7 @@ from .structs import BAType
 
 class VideoOdometry:
     def __init__(self, cfg):
-        self._droid = DroidNet(cfg)
+        self._droid = DroidNet(cfg).to(cfg.get("device", "cuda"))
         self._corr = CorrBlock(cfg)
         self._motion_corr = CorrBlock(cfg)
         self._dspo = DSPOptimizer(cfg)
