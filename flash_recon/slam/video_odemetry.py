@@ -27,11 +27,13 @@ class VideoOdometry:
 
         self._coords0 = torch.stack([x, y], dim=-1)
 
+    @torch.inference_mode()
     def extract(self, frame):
         fmap = self._droid.apply_fnet(frame)
         net, inp = self._droid.apply_cnet(frame)
         return fmap, net, inp
 
+    @torch.inference_mode()
     def compute_motion(self, prev_fmap, fmap, net, inp):
         corr = self._motion_corr
         corr.pyramid = None
@@ -40,6 +42,7 @@ class VideoOdometry:
         _, delta, _ = self._droid.apply_update(net, inp, feat)
         return delta.norm(dim=-1).mean().item()
 
+    @torch.inference_mode()
     def __call__(
         self,
         buffer: KeyFrameBuffer,
