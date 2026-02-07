@@ -41,7 +41,7 @@ class SLAM:
         self.loop_thresh = cfg.get("tracking", {}).get("loop", {}).get("thresh")
         self.loop_radius = cfg.get("tracking", {}).get("loop", {}).get("radius")
 
-        self.intrinsics = Intrinsics(fx, fy, cx, cy, device=self.device)
+        self.intrinsics = Intrinsics(fx, fy, cx, cy, device=cfg.get("device", "cuda"))
 
         self.warmup_keyframes = int(cfg.get("tracking", {}).get("warmup", 8))
         self.max_age = int(cfg.get("tracking", {}).get("max_age", 25))
@@ -65,7 +65,6 @@ class SLAM:
             net=net,
             inp=inp,
         )
-        self._bootstrap()
 
         self.prev_fmap, self.prev_net, self.prev_inp = fmap, net, inp
         self._initialized = True
@@ -77,15 +76,11 @@ class SLAM:
         self.graph.add_neighborhood_factors(t0=0, t1=count, rad=3, buffer=snapshot)
         self.vo(self.buffer, self.graph, steps=8, alternate=False)
 
-        dist = geometry.compute_distance(
-            *self.buffer.get_geometric_attrs(), *self.graph.get_edges(), beta=self.beta
-        )
-
         self.graph.add_proximity_factors(
             EdgeRequest(
                 strategy=EdgeStrategy.LOCAL,
                 buffer=snapshot,
-                dist=dist,
+                beta=self.beta,
                 t0=0,
                 t1=0,
                 rad=2,
@@ -117,22 +112,18 @@ class SLAM:
         ).item()
 
         if dist < self.dist_threshold:
-            self.graph.remove_keyframe(count - 1)
+            self.graph.remove_edge(count - 1)
             self.buffer.remove(count - 1)
             return True
 
         return False
 
     def _add_local_edges(self, count, snapshot):
-        dist = geometry.compute_distance(
-            *self.buffer.get_geometric_attrs(), *self.graph.get_edges(), beta=self.beta
-        )
-
         self.graph.add_proximity_factors(
             EdgeRequest(
                 strategy=EdgeStrategy.LOCAL,
                 buffer=snapshot,
-                dist=dist,
+                beta=self.beta,
                 t0=count - 5,
                 t1=max(count - self.local_window, 0),
                 rad=self.local_radius,
@@ -146,19 +137,11 @@ class SLAM:
         t_start_loop = max(0, count - self.loop_window)
         max_factors = 8 * self.loop_window - len(self.graph)
 
-        dist = geometry.compute_distance(
-            *self.buffer.get_geometric_attrs(),
-            t0=0,
-            t1=count,
-            t0_loop=t_start_loop,
-            beta=self.beta,
-        )
-
         self.graph.add_proximity_factors(
             EdgeRequest(
                 strategy=EdgeStrategy.LOOP,
                 buffer=snapshot,
-                dist=dist,
+                beta=self.beta,
                 t0_loop=t_start_loop,
                 t0=0,
                 t1=count,
@@ -173,15 +156,11 @@ class SLAM:
     def _add_global_edges(self, count, snapshot):
         max_factors = ((self.global_radius + 2) * 2) * count
 
-        dist = geometry.compute_distance(
-            *self.buffer.get_geometric_attrs(), *self.graph.get_edges(), beta=self.beta
-        )
-
         self.graph.add_proximity_factors(
             EdgeRequest(
                 strategy=EdgeStrategy.GLOBAL,
-                dist=dist,
                 buffer=snapshot,
+                beta=self.beta,
                 t0=0,
                 t1=count,
                 rad=self.global_radius,
