@@ -3,7 +3,7 @@ name = "flash-recon"
 version = "0.1.0"
 description = "Accelerating video odometry"
 readme = "README.md"
-requires-python = "==3.13.*"
+requires-python = "==3.12.*"
 dependencies = [
     "torch",
     "torchvision",

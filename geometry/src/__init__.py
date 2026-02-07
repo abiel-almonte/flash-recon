@@ -1,6 +1,6 @@
 from .structs import Pose, Tangent, Intrinsics
 from .ba import full_ba, motion_only_ba, ba_scale_shift
-from .proj import projective_transform, induced_flow, depth_filter
+from .proj import projective_transform, induced_flow, depth_filter, compute_distance
 from .lie import (
     pose_to_tangent,
     tangent_to_pose,
@@ -32,5 +32,6 @@ __all__ = [
     "pose_retraction",
     "pose_to_matrix",
     "matrix_to_pose",
-    "get_meshgrid"
+    "compute_distance",
+    "get_meshgrid",
 ]

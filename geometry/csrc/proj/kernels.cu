@@ -1,6 +1,7 @@
 #include "kernels.h"
 #include "kernels/simple.cuh"
 #include "kernels/fused.cuh"
+#include "kernels/distance.cuh"
 
 Tensor proj_cuda(Tensor &p, const float fx, const float fy, const float cx, const float cy, const int last_dim) {
     CHECK_INPUT(p);
@@ -212,4 +213,38 @@ Tensor fused_depth_filter_cuda(
     );
 
     return count;
+}
+
+Tensor frame_distance_cuda(
+    Tensor t,
+    Tensor q,
+    Tensor disps,
+    Tensor intrinsics,
+    Tensor ii,
+    Tensor jj,
+    float beta
+) {
+    CHECK_INPUT(t);
+    CHECK_INPUT(q);
+    CHECK_INPUT(disps);
+    CHECK_INPUT(intrinsics);
+    CHECK_INPUTL(ii);
+    CHECK_INPUTL(jj);
+
+    const int E = ii.size(0);
+    auto opts = disps.options();
+    Tensor dist = torch::zeros({E}, opts);
+
+    frame_distance_kernel<<<E, THREADS>>>(
+        t.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        q.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        disps.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+        intrinsics.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+        ii.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
+        jj.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
+        dist.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+        beta
+    );
+
+    return dist;
 }

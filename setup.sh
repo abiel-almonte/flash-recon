@@ -2,7 +2,7 @@
 
 uv sync --all-extras --group dev --preview-features extra-build-dependencies
 
-.venv/bin/python -c "
+/workspace/.venv/bin/python -c "
 import torch.nn as nn
 from torchvision.models import resnet50, ResNet50_Weights
 
