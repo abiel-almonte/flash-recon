@@ -6,7 +6,8 @@ Tensor corr_forward(
     const Tensor coords, // [T, 2, H, W]
     const int radius
 ){
-    CHECK_INPUT(volume);
+    CHECK_DEVICE(volume);
+    CHECK_CONTIGUOUS(volume);
     CHECK_INPUT(coords);
 
     const int T = volume.size(0);
@@ -20,12 +21,14 @@ Tensor corr_forward(
     const dim3 blocks((W + 16 - 1) / 16, (H + 16 - 1) / 16, T);
     const dim3 threads(16, 16);
     
-    corr_forward_kernel<<<blocks, threads>>>(
-        volume.packed_accessor32<float, 5, torch::RestrictPtrTraits>(),
-        coords.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
-        corr.packed_accessor32<float, 5, torch::RestrictPtrTraits>(),
-        radius
-    );
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(volume.scalar_type(), "corr_forward", [&] {
+        corr_forward_kernel<scalar_t><<<blocks, threads>>>(
+            volume.packed_accessor32<scalar_t, 5, torch::RestrictPtrTraits>(),
+            coords.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
+            corr.packed_accessor32<float, 5, torch::RestrictPtrTraits>(),
+            radius
+        );
+    });
 
     corr = corr.view({T, rd*rd,H, W});
     return corr;
