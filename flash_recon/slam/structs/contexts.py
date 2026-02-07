@@ -58,7 +58,7 @@ class EdgeRequest:
     strategy: EdgeStrategy
 
     buffer: Optional[BufferSnapshot] = None
-    dist: Optional[object] = None
+    beta: float = 0.3
     t0_loop: Optional[int] = None
 
     t0: int = 0
