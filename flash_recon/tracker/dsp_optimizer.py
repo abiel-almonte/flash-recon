@@ -24,7 +24,7 @@ class DSPOptimizer:
         if type is BAType.POSE_DEPTH:
             for _ in range(iters):
                 self._step_pose_depth(ctx)
-        
+
         elif type is BAType.DEPTH_SCALE:
             for _ in range(iters):
                 self._step_depth_scale(ctx)
@@ -35,9 +35,7 @@ class DSPOptimizer:
 
         return ctx
 
-    def __call__(
-        self, ctx: BAContext, params: dict = None
-    ) -> BAContext:
+    def __call__(self, ctx: BAContext, params: dict = None) -> BAContext:
         if params:
             ctx = replace(ctx, **params)
 

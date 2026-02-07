@@ -32,5 +32,5 @@ __all__ = [
     "pose_retraction",
     "pose_to_matrix",
     "matrix_to_pose",
-    "get_meshgrid"
+    "get_meshgrid",
 ]

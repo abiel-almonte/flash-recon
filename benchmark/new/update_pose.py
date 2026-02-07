@@ -28,7 +28,7 @@ def update_pose(camera, converged_threshold=1e-4):
     # Extract new R and T from the updated pose
     new_T_mat = pose_to_matrix(new_pose)[0]  # [4, 4]
     new_R = new_T_mat[:3, :3]  # [3, 3]
-    new_T = new_T_mat[:3, 3]   # [3]
+    new_T = new_T_mat[:3, 3]  # [3]
 
     camera.update_RT(new_R, new_T)
 

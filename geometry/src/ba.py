@@ -187,7 +187,7 @@ def full_ba(
     n_poses, ht, wd = disps_window.shape
     keyframe_indices, edge_to_keyframe = torch.unique(ii_window, return_inverse=True)
 
-    damping_keyframes = eta 
+    damping_keyframes = eta
 
     # ========== PROJECTIVE JACOBIANS & LINEAR SYSTEM CONSTRUCTION ==========
 
