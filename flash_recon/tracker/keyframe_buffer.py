@@ -89,8 +89,8 @@ class KeyFrameBuffer:
 
     def append(
         self,
-        pose: Pose,
-        disp: torch.Tensor,
+        pose: Pose = None,
+        disp: torch.Tensor = None,
         mono_depth: torch.Tensor = None,
         fmap: torch.Tensor = None,
         net: torch.Tensor = None,
@@ -101,9 +101,11 @@ class KeyFrameBuffer:
         if idx >= self.capacity:
             raise RuntimeError("KeyFrameBuffer capacity exceeded")
 
-        self._poses[idx] = pose
-        self._disps[idx] = disp
-        self._valid_depth_mask_small[idx] = disp > 0
+        if pose is not None:
+            self._poses[idx] = pose
+        if disp is not None:
+            self._disps[idx] = disp
+        self._valid_depth_mask_small[idx] = self._disps[idx] > 0
 
         if mono_depth is not None:
             self._mono_depths[idx] = mono_depth
