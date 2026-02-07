@@ -13,6 +13,7 @@ class DroidNet(nn.Module):
         self.update = UpdateModule().half()
 
         self._load_weights(cfg["weights"]["droid"])
+        self.update = torch.compile(self.update)
 
     def _load_weights(self, fp: str):
         state_dict = OrderedDict(
