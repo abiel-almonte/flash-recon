@@ -11,5 +11,5 @@ cd /workspace/geometry \
 cd /workspace/neural \
 && rm -rf build *.egg-info \
 && uv pip install -e . --no-build-isolation \
-&& pybind11-stubgen neural_cuda.corr -o /workspace/neural/src
+&& pybind11-stubgen neural_cuda.corr -o /workspace/neural/src \
 && black .
