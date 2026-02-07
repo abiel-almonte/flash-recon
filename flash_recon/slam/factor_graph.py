@@ -1,6 +1,6 @@
 import torch
 
-from geometry import get_meshgrid, projective_transform
+from geometry import get_meshgrid, projective_transform, compute_distance
 from neural import CorrBlock
 
 from .structs import BufferSnapshot, EdgeRequest, EdgeStrategy
@@ -33,7 +33,7 @@ class FactorGraph:
         self.target_inac = torch.zeros([0, ht, wd, 2], device=self.device)
         self.weight_inac = torch.zeros([0, ht, wd, 2], device=self.device)
 
-        self.corr = CorrBlock()
+        self.corr = CorrBlock(cfg)
         self.net = None
         self.inp = None
 
@@ -181,8 +181,8 @@ class FactorGraph:
 
     def _add_local_proximity_factors(
         self,
-        dist: torch.Tensor,
         buffer: BufferSnapshot,
+        beta: float = 0.3,
         t0: int = 0,
         t1: int = 0,
         rad: int = 2,
@@ -204,7 +204,18 @@ class FactorGraph:
         ii = ii.flatten()
         jj = jj.flatten()
 
-        d = dist.detach().to(cpu_device)
+        d = (
+            compute_distance(
+                buffer.poses,
+                buffer.disps,
+                buffer.intrinsics,
+                ii.to(gpu_device),
+                jj.to(gpu_device),
+                beta=beta,
+            )
+            .detach()
+            .to(cpu_device)
+        )
         d[(ii - rad) < jj] = torch.inf
         d[d > 100] = torch.inf
 
@@ -272,8 +283,8 @@ class FactorGraph:
 
     def _add_global_proximity_factors(
         self,
-        dist: torch.Tensor,
         buffer: BufferSnapshot,
+        beta: float = 0.3,
         t0: int = 0,
         t1: int = 0,
         rad: int = 2,
@@ -300,7 +311,18 @@ class FactorGraph:
         ii = ii.flatten()
         jj = jj.flatten()
 
-        d = dist.detach().to(cpu_device)
+        d = (
+            compute_distance(
+                buffer.poses,
+                buffer.disps,
+                buffer.intrinsics,
+                ii.to(gpu_device),
+                jj.to(gpu_device),
+                beta=beta,
+            )
+            .detach()
+            .to(cpu_device)
+        )
         rawd = d.clone().reshape(ilen, jlen)
         d[(ii - rad) < jj] = torch.inf
         d[d > thresh] = torch.inf
@@ -381,8 +403,8 @@ class FactorGraph:
     def add_proximity_factors(self, request: EdgeRequest):
         if request.strategy == EdgeStrategy.LOCAL:
             self._add_local_proximity_factors(
-                dist=request.dist,
                 buffer=request.buffer,
+                beta=request.beta,
                 t0=request.t0,
                 t1=request.t1,
                 rad=request.rad,
@@ -392,8 +414,8 @@ class FactorGraph:
             )
         else:
             self._add_global_proximity_factors(
-                dist=request.dist,
                 buffer=request.buffer,
+                beta=request.beta,
                 t0=request.t0,
                 t1=request.t1,
                 rad=request.rad,
