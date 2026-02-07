@@ -38,6 +38,17 @@ class FactorGraph:
         self.net = None
         self.inp = None
 
+    def get_edges(self):
+        return self.ii, self.jj
+
+    def get_flow_attrs(self):
+        return self.target, self.weight, self.net, self.inp
+
+    def store_residuals(self, target, weight, net, damping, unique_ii):
+        self.target = target
+        self.weight = weight
+        self.net = net
+        self.damping[unique_ii] = damping
     def _remove_duplicates(self, ii, jj):
         """remove duplicate edges"""
         curr_ii = torch.cat([self.ii, self.ii_inac], dim=0)
