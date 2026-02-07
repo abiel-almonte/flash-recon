@@ -167,7 +167,7 @@ class FactorGraph:
         else:
             self.inp = torch.cat([self.inp, inp], dim=0)
 
-    def add_neighborhood_factors(self, t0, t1, buffer: BufferSnapshot):
+    def add_neighborhood_factors(self, t0, t1, rad, buffer: BufferSnapshot):
         """add edges between neighboring frames within radius"""
 
         ix = torch.arange(t0, t1, device=self.device, dtype=torch.long)
@@ -175,7 +175,7 @@ class FactorGraph:
         ii = ii.reshape(-1)
         jj = jj.reshape(-1)
 
-        keep = ((ii - jj).abs() > 0) & ((ii - jj).abs() <= self.radius)
+        keep = ((ii - jj).abs() > 0) & ((ii - jj).abs() <= rad)
 
         self.add_factors(ii[keep], jj[keep], buffer)
 
