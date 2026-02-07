@@ -179,7 +179,7 @@ class FactorGraph:
 
         self.add_factors(ii[keep], jj[keep], buffer)
 
-    def _add_frontend_proximity_factors(
+    def _add_local_proximity_factors(
         self,
         dist: torch.Tensor,
         buffer: BufferSnapshot,
@@ -270,7 +270,7 @@ class FactorGraph:
 
         self.add_factors(ii_new, jj_new, buffer, remove)
 
-    def _add_backend_proximity_factors(
+    def _add_global_proximity_factors(
         self,
         dist: torch.Tensor,
         buffer: BufferSnapshot,
