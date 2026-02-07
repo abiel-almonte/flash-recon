@@ -119,6 +119,35 @@ class KeyFrameBuffer:
         self.needs_update[idx] = True
         self._count += 1
 
+    def propagate(self):
+        idx = self._count
+        if idx > 0 and idx < self.capacity:
+            self._poses[idx] = self._poses[idx - 1]
+            self._disps[idx] = self._disps[idx - 1].mean()
+
+    def remove(self, idx: int) -> None:
+        if idx < 0 or idx >= self._count:
+            raise IndexError(f"Index {idx} out of range [0, {self._count})")
+
+        if idx < self._count - 1:
+            src = slice(idx + 1, self._count)
+            dst = slice(idx, self._count - 1)
+
+            self._poses[dst] = self._poses[src]
+            self._disps[dst] = self._disps[src]
+            self._disps_up[dst] = self._disps_up[src]
+            self._mono_depths[dst] = self._mono_depths[src]
+            self._scales[dst] = self._scales[src]
+            self._shifts[dst] = self._shifts[src]
+            self._valid_depth_mask[dst] = self._valid_depth_mask[src]
+            self._valid_depth_mask_small[dst] = self._valid_depth_mask_small[src]
+            self.needs_update[dst] = self.needs_update[src]
+            self.fmaps[dst] = self.fmaps[src]
+            self.nets[dst] = self.nets[src]
+            self.inps[dst] = self.inps[src]
+
+        self._count -= 1
+
     def update_scale_shift(
         self,
         mono: torch.Tensor,
