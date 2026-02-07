@@ -159,3 +159,5 @@ class VideoOdometry:
                 ctx = buffer.create_ba_context(ba_type)
                 ctx = self._dspo(ctx, params)
                 buffer.apply_ba_result(ctx)
+
+            graph.age += 1
