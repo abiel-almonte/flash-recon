@@ -82,7 +82,7 @@ class Intrinsics:
         )
 
     def downsample(self, factor: float):
-        """Downsample intrinsics (common in SLAM for efficiency)."""
+        """Downsample intrinsics."""
         return Intrinsics(
             fx=self.fx / factor,
             fy=self.fy / factor,

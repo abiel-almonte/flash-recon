@@ -46,7 +46,7 @@ std::tuple<Tensor, Tensor> fused_projective_transform_with_reduction_cuda(
 
 std::tuple<Tensor, Tensor, Tensor> fused_depth_jacobians_cuda(
     Tensor disps,// [U, ht, wd]
-    Tensor mono_disps, // [U, ht, wd]
+    Tensor mono_depths, // [U, ht, wd]
     Tensor valid_depth, // [U, ht, wd]
     Tensor scales, // [U]
     Tensor shifts, // [U]
@@ -55,7 +55,7 @@ std::tuple<Tensor, Tensor, Tensor> fused_depth_jacobians_cuda(
 ) {
 
     CHECK_INPUT(disps);
-    CHECK_INPUT(mono_disps);
+    CHECK_INPUT(mono_depths);
     CHECK_INPUTB(valid_depth);
     CHECK_INPUT(scales);
     CHECK_INPUT(shifts);
@@ -76,7 +76,7 @@ std::tuple<Tensor, Tensor, Tensor> fused_depth_jacobians_cuda(
 
     fused_depth_jacobians_kernel<<<E, THREADS>>>(
         disps.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
-        mono_disps.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+        mono_depths.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
         valid_depth.packed_accessor32<bool, 3, torch::RestrictPtrTraits>(),
         scales.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
         shifts.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),

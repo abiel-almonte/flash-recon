@@ -15,7 +15,7 @@ std::tuple<Tensor, Tensor> fused_projective_transform_with_reduction_cuda(
 
 std::tuple<Tensor, Tensor, Tensor> fused_depth_jacobians_cuda(
     Tensor disps,
-    Tensor mono_disps,
+    Tensor mono_depths,
     Tensor valid_depth,
     Tensor scales,
     Tensor shifts,

@@ -1,7 +1,7 @@
 import functools
 import torch
 
-from structs import Pose, Intrinsics
+from ..structs import Pose, Intrinsics
 
 from geometry_cuda.proj import (
     proj_cuda,
@@ -9,6 +9,8 @@ from geometry_cuda.proj import (
     fused_projective_cuda,
     fused_projective_jac_cuda,
     fused_induced_flow_cuda,
+    fused_depth_filter_cuda,
+    frame_distance_cuda,
 )
 
 MIN_DEPTH = 0.2
@@ -122,3 +124,29 @@ def induced_flow_fused(
         poses.t, poses.q, depths, intrinsics.as_tensor, ii, jj
     )
     return coords, valid
+
+
+def depth_filter_fused(
+    poses: Pose,
+    depths: torch.Tensor,
+    intrinsics: Intrinsics,
+    ii: torch.Tensor,
+    thresh: torch.Tensor,
+):
+    count = fused_depth_filter_cuda(
+        poses.t, poses.q, depths, intrinsics.as_tensor, ii, thresh
+    )
+    return count
+
+
+def frame_distance_fused(
+    poses: Pose,
+    disps: torch.Tensor,
+    intrinsics: Intrinsics,
+    ii: torch.Tensor,
+    jj: torch.Tensor,
+    beta: float,
+):
+    return frame_distance_cuda(
+        poses.t, poses.q, disps, intrinsics.as_tensor, ii, jj, beta
+    )

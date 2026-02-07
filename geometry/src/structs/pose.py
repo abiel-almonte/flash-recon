@@ -31,7 +31,31 @@ class Pose:
         self.t = self.t.contiguous()
 
     def __getitem__(self, idx):
-        return Pose(self.t[idx], self.q[idx])
+        t = self.t[idx]
+        q = self.q[idx]
+        if t.ndim == 1:
+            t = t.unsqueeze(0)
+        if q.ndim == 1:
+            q = q.unsqueeze(0)
+        return Pose(t, q)
+
+    def __setitem__(self, idx, pose: "Pose"):
+        if isinstance(pose, Pose):
+            # Handle batch assignment: self._poses[:T] = payload.poses
+            # pose.t and pose.q should match the slice shape
+            self.t[idx] = (
+                pose.t.squeeze(0)
+                if pose.t.ndim == 2 and pose.t.size(0) == 1
+                else pose.t
+            )
+            self.q[idx] = (
+                pose.q.squeeze(0)
+                if pose.q.ndim == 2 and pose.q.size(0) == 1
+                else pose.q
+            )
+
+        else:
+            raise ValueError(f"pose must be of type Pose. Got {pose.__class__}")
 
     @property
     def device(self):

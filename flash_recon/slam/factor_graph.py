@@ -1,0 +1,449 @@
+import torch
+
+from geometry import get_meshgrid, projective_transform, compute_distance
+from neural import CorrBlock
+
+from .structs import BufferSnapshot, EdgeRequest, EdgeStrategy
+
+
+class FactorGraph:
+    def __init__(self, cfg):
+        self.device = cfg.get("device", "cuda")
+        self.down_scale = int(cfg.get("cam", {}).get("down_scale", 8))
+        H_out = int(cfg.get("cam", {}).get("H_out", 480))
+        W_out = int(cfg.get("cam", {}).get("W_out", 640))
+        ht = H_out // self.down_scale
+        wd = W_out // self.down_scale
+
+        buffer_capacity = int(cfg.get("tracking", {}).get("buffer", 512))
+        self.max_factors = int(cfg.get("tracking", {}).get("max_factors", -1))
+        y, x = get_meshgrid(ht, wd, device=self.device, dtype=torch.float)
+        self.coords0 = torch.stack([y, x], dim=-1)
+        self.ii = torch.as_tensor([], device=self.device, dtype=torch.long)
+        self.jj = torch.as_tensor([], device=self.device, dtype=torch.long)
+        self.age = torch.as_tensor([], device=self.device, dtype=torch.long)
+        self.damping = torch.ones(buffer_capacity, ht, wd, device=self.device) * 1e-6
+        self.target = torch.zeros([0, ht, wd, 2], device=self.device)
+        self.weight = torch.zeros([0, ht, wd, 2], device=self.device)
+
+        self.ii_inac = torch.as_tensor([], device=self.device, dtype=torch.long)
+        self.jj_inac = torch.as_tensor([], device=self.device, dtype=torch.long)
+        self.ii_bad = torch.as_tensor([], device=self.device, dtype=torch.long)
+        self.jj_bad = torch.as_tensor([], device=self.device, dtype=torch.long)
+        self.target_inac = torch.zeros([0, ht, wd, 2], device=self.device)
+        self.weight_inac = torch.zeros([0, ht, wd, 2], device=self.device)
+
+        self.corr = CorrBlock(cfg)
+        self.net = None
+        self.inp = None
+
+    def get_edges(self):
+        return self.ii, self.jj
+
+    def get_flow_attrs(self):
+        return self.target, self.weight, self.net, self.inp
+
+    def store_residuals(self, target, weight, net, damping, unique_ii):
+        self.target = target
+        self.weight = weight
+        self.net = net
+        self.damping[unique_ii] = damping
+
+    def _remove_duplicates(self, ii, jj):
+        curr_ii = torch.cat([self.ii, self.ii_inac], dim=0)
+        curr_jj = torch.cat([self.jj, self.jj_inac], dim=0)
+
+        # Handle empty current edges - nothing to deduplicate against
+        if curr_ii.numel() == 0:
+            return ii, jj
+
+        all_max = max(
+            curr_ii.max().item(), curr_jj.max().item(), ii.max().item(), jj.max().item()
+        )
+        encoding_stride = all_max + 1
+
+        edges = ii * encoding_stride + jj
+        curr_edges = curr_ii * encoding_stride + curr_jj
+
+        keep = torch.isin(edges, curr_edges, invert=True)
+
+        return ii[keep], jj[keep]
+
+    def remove_factors(self, remove, store_inac=False):
+        """drop edges from factor graph"""
+
+        if store_inac:
+            self.ii_inac = torch.cat([self.ii_inac, self.ii[remove]], dim=0)
+            self.jj_inac = torch.cat([self.jj_inac, self.jj[remove]], dim=0)
+            self.target_inac = torch.cat([self.target_inac, self.target[remove]], dim=0)
+            self.weight_inac = torch.cat([self.weight_inac, self.weight[remove]], dim=0)
+
+        keep = ~remove
+
+        self.ii = self.ii[keep]
+        self.jj = self.jj[keep]
+        self.age = self.age[keep]
+        self.target = self.target[keep]
+        self.weight = self.weight[keep]
+
+        self.corr = self.corr[keep]
+
+        if self.net is not None:
+            self.net = self.net[keep]
+
+        if self.inp is not None:
+            self.inp = self.inp[keep]
+
+    def remove_edge(self, ix):
+        m = (self.ii_inac == ix) | (self.jj_inac == ix)
+
+        self.ii_inac[self.ii_inac >= ix] -= 1
+        self.jj_inac[self.jj_inac >= ix] -= 1
+
+        if torch.any(m):
+            inv_m = ~m
+            self.ii_inac = self.ii_inac[inv_m]
+            self.jj_inac = self.jj_inac[inv_m]
+            self.target_inac = self.target_inac[inv_m]
+            self.weight_inac = self.weight_inac[inv_m]
+
+        m = (self.ii == ix) | (self.jj == ix)
+
+        self.ii[self.ii >= ix] -= 1
+        self.jj[self.jj >= ix] -= 1
+        self.remove_factors(m, store_inac=False)
+
+    def add_factors(self, ii, jj, buffer: BufferSnapshot, remove=False):
+        """add edges to factor graph"""
+
+        ii, jj = self._remove_duplicates(ii, jj)
+        if ii.size(0) == 0:
+            return
+
+        if (
+            self.max_factors > 0
+            and self.ii.size(0) + ii.size(0) > self.max_factors
+            and self.corr is not None
+            and remove
+        ):
+            ix_sorted = torch.argsort(self.age)
+            num_to_remove = self.age.size(0) - self.max_factors + ii.size(0)
+
+            if num_to_remove > 0:
+                remove_mask = torch.zeros_like(self.age, dtype=torch.bool)
+                remove_mask[ix_sorted[-num_to_remove:]] = True
+                self.remove_factors(remove_mask, store_inac=True)
+
+        target, _ = projective_transform(
+            buffer.poses,
+            buffer.disps,
+            buffer.intrinsics,
+            ii.contiguous(),
+            jj.contiguous(),
+            jacobian=False,
+        )
+        weight = torch.zeros_like(target)
+
+        self.ii = torch.cat([self.ii, ii], dim=0)
+        self.jj = torch.cat([self.jj, jj], dim=0)
+        self.age = torch.cat([self.age, torch.zeros_like(ii)], dim=0)
+        self.target = torch.cat([self.target, target], dim=0)
+        self.weight = torch.cat([self.weight, weight], dim=0)
+
+        fmap1 = buffer.fmaps[ii, 0]
+        c = (ii == jj).long().clamp(max=buffer.fmaps.size(1) - 1)
+        fmap2 = buffer.fmaps[jj, c]
+        self.corr.build_pyramid(fmap1, fmap2)
+
+        net = buffer.nets[ii]
+        if self.net is None:
+            self.net = net
+        else:
+            self.net = torch.cat([self.net, net], dim=0)
+
+        inp = buffer.inps[ii]
+        if self.inp is None:
+            self.inp = inp
+        else:
+            self.inp = torch.cat([self.inp, inp], dim=0)
+
+    def add_neighborhood_factors(self, t0, t1, rad, buffer: BufferSnapshot):
+        """add edges between neighboring frames within radius"""
+
+        ix = torch.arange(t0, t1, device=self.device, dtype=torch.long)
+        ii, jj = torch.meshgrid(ix, ix, indexing="ij")
+        ii = ii.reshape(-1)
+        jj = jj.reshape(-1)
+
+        keep = ((ii - jj).abs() > 0) & ((ii - jj).abs() <= rad)
+
+        self.add_factors(ii[keep], jj[keep], buffer)
+
+    def _add_local_proximity_factors(
+        self,
+        buffer: BufferSnapshot,
+        beta: float = 0.3,
+        t0: int = 0,
+        t1: int = 0,
+        rad: int = 2,
+        nms: int = 2,
+        thresh: float = 16.0,
+        remove: bool = False,
+    ):
+        """Add proximity-based edges"""
+
+        count = buffer.count
+        gpu_device = self.device
+        cpu_device = torch.device("cpu")
+        stride = count - t1
+
+        ix = torch.arange(t0, count)
+        jx = torch.arange(t1, count)
+
+        ii, jj = torch.meshgrid(ix, jx, indexing="ij")
+        ii = ii.flatten()
+        jj = jj.flatten()
+
+        d = (
+            compute_distance(
+                buffer.poses,
+                buffer.disps,
+                buffer.intrinsics,
+                ii.to(gpu_device),
+                jj.to(gpu_device),
+                beta=beta,
+            )
+            .detach()
+            .to(cpu_device)
+        )
+        d[(ii - rad) < jj] = torch.inf
+        d[d > 100] = torch.inf
+
+        ii1: torch.Tensor = torch.cat([self.ii, self.ii_bad, self.ii_inac], dim=0)
+        jj1: torch.Tensor = torch.cat([self.jj, self.jj_bad, self.jj_inac], dim=0)
+
+        for i, j in zip(ii1.tolist(), jj1.tolist()):
+            r = max(min(abs(i - j) - 2, nms), 0)
+
+            for di in range(-nms, nms + 1):
+
+                for dj in range(-nms, nms + 1):
+                    if abs(di) + abs(dj) <= r:
+                        i1 = i + di
+                        j1 = j + dj
+
+                        if (t0 <= i1 < count) and (t1 <= j1 < count):
+                            flat_idx = (i1 - t0) * stride + (j1 - t1)
+                            d[flat_idx] = torch.inf
+
+        es = []
+        for i in range(t0, count):
+            for j in range(max(i - rad - 1, 0), i):
+                es.append((i, j))
+                es.append((j, i))
+
+                flat_idx = (i - t0) * stride + (j - t1)
+                d[flat_idx] = torch.inf
+
+        order = torch.argsort(d)
+        cap = self.max_factors if self.max_factors > 0 else float("inf")
+        for k in order.tolist():
+            if d[k].item() > thresh:
+                continue
+
+            if len(es) > cap:
+                break
+
+            i = int(ii[k].item())
+            j = int(jj[k].item())
+
+            es.append((i, j))
+            es.append((j, i))
+
+            r = max(min(abs(i - j) - 2, nms), 0)
+            for di in range(-nms, nms + 1):
+
+                for dj in range(-nms, nms + 1):
+                    if abs(di) + abs(dj) <= r:
+                        i1 = i + di
+                        j1 = j + dj
+
+                        if (t0 <= i1 < count) and (t1 <= j1 < count):
+                            flat_idx = (i1 - t0) * stride + (j1 - t1)
+                            d[flat_idx] = torch.inf
+
+        if len(es) < 1:
+            return
+
+        ii_new, jj_new = torch.as_tensor(
+            es, device=gpu_device, dtype=torch.long
+        ).unbind(dim=-1)
+
+        self.add_factors(ii_new, jj_new, buffer, remove)
+
+    def _add_global_proximity_factors(
+        self,
+        buffer: BufferSnapshot,
+        beta: float = 0.3,
+        t0: int = 0,
+        t1: int = 0,
+        rad: int = 2,
+        nms: int = 2,
+        thresh: float = 16.0,
+        max_factors: int = 500,
+        t0_loop=None,
+        loop=False,
+    ):
+        if t0_loop is None or not loop:
+            t0_loop = t0
+        assert t0_loop >= t0, f"short: {t0_loop}, long: {t0}."
+
+        gpu_device = self.device
+        cpu_device = torch.device("cpu")
+
+        ilen = t1 - t0_loop
+        jlen = t1 - t0
+
+        ix = torch.arange(t0_loop, t1, device=cpu_device)
+        jx = torch.arange(t0, t1, device=cpu_device)
+
+        ii, jj = torch.meshgrid(ix, jx, indexing="ij")
+        ii = ii.flatten()
+        jj = jj.flatten()
+
+        d = (
+            compute_distance(
+                buffer.poses,
+                buffer.disps,
+                buffer.intrinsics,
+                ii.to(gpu_device),
+                jj.to(gpu_device),
+                beta=beta,
+            )
+            .detach()
+            .to(cpu_device)
+        )
+        rawd = d.clone().reshape(ilen, jlen)
+        d[(ii - rad) < jj] = torch.inf
+        d[d > thresh] = torch.inf
+        d = d.reshape(ilen, jlen)
+
+        edges = []
+        for i in range(t0_loop, t1):
+            for j in range(
+                max(i - rad - 1, t0), i
+            ):  # droid-slam impl:  j in range(max(i - rad - 1, 0), i):
+                edges.append((i, j))
+                edges.append((j, i))
+                di = i - t0_loop
+                dj = j - t0
+                d[di, dj] = torch.inf
+
+        vals, flat_ix = torch.sort(d.flatten(), descending=False)
+        flat_ix = flat_ix[vals <= thresh]
+
+        loop_edges = 0
+        n_neighboring = 1
+        cap = max_factors if max_factors > 0 else float("inf")
+
+        if len(edges) <= cap:
+            iix = ii[flat_ix]
+            jjx = jj[flat_ix]
+
+            if loop:
+                window = torch.arange(
+                    -n_neighboring, n_neighboring + 1, device=cpu_device
+                )
+                si = (window + iix[:, None]).clamp(t0_loop, t1 - 1)
+                sj = (window + jjx[:, None]).clamp(t0, t1 - 1)
+                SI, SJ = torch.meshgrid(si.flatten(), sj.flatten(), indexing="ij")
+
+                mask = (rawd[(SI - t0_loop).long(), (SJ - t0).long()] <= thresh) & (
+                    SI - SJ > 20
+                )
+
+                sub_edges = torch.stack([SI[mask], SJ[mask]], dim=-1)
+                loop_edges += sub_edges.size(0)
+                if sub_edges.numel() > 0:
+                    edges += [(int(a), int(b)) for a, b in sub_edges.tolist()]
+            else:
+                edges += [
+                    (int(a), int(b))
+                    for a, b in torch.stack([iix, jjx], dim=-1).tolist()
+                ]
+                edges += [
+                    (int(a), int(b))
+                    for a, b in torch.stack([jjx, iix], dim=-1).tolist()
+                ]
+
+            di = flat_ix // jlen
+            dj = flat_ix % jlen
+
+            offsets = torch.arange(-nms, nms + 1, device=cpu_device)
+            dy, dx = torch.meshgrid(offsets, offsets, indexing="ij")
+            dy = dy.reshape(-1)
+            dx = dx.reshape(-1)
+
+            yi = (di[:, None] + dy[None, :]).clamp(0, ilen - 1)
+            xj = (dj[:, None] + dx[None, :]).clamp(0, jlen - 1)
+
+            flat_idx = (yi.reshape(-1) * jlen + xj.reshape(-1)).long()
+            d = d.reshape(-1)
+            d[flat_idx] = torch.inf
+            d = d.reshape(ilen, jlen)
+
+        if len(edges) < 3 or (loop and loop_edges == 0):
+            return
+
+        ii_new, jj_new = torch.as_tensor(
+            edges, device=gpu_device, dtype=torch.long
+        ).unbind(dim=-1)
+        self.add_factors(ii_new, jj_new, buffer, remove=True)
+
+    def add_proximity_factors(self, request: EdgeRequest):
+        if request.strategy == EdgeStrategy.LOCAL:
+            self._add_local_proximity_factors(
+                buffer=request.buffer,
+                beta=request.beta,
+                t0=request.t0,
+                t1=request.t1,
+                rad=request.rad,
+                nms=request.nms,
+                thresh=request.thresh,
+                remove=request.remove,
+            )
+        else:
+            self._add_global_proximity_factors(
+                buffer=request.buffer,
+                beta=request.beta,
+                t0=request.t0,
+                t1=request.t1,
+                rad=request.rad,
+                nms=request.nms,
+                thresh=request.thresh,
+                max_factors=request.max_factors,
+                t0_loop=request.t0_loop,
+                loop=request.loop,
+            )
+
+    def clear(self):
+        self.ii = None
+        self.jj = None
+        self.age = None
+        self.damping = None
+        self.target = None
+        self.weight = None
+
+        self.ii_inac = None
+        self.jj_inac = None
+        self.ii_bad = None
+        self.jj_bad = None
+        self.target_inac = None
+        self.weight_inac = None
+
+        self.corr = None
+        self.net = None
+        self.inp = None
+
+    def __len__(self):
+        return len(self.ii)

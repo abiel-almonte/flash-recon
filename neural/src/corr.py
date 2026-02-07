@@ -5,10 +5,10 @@ from neural_cuda.corr import corr_forward
 
 
 class CorrBlock:
-
-    def __init__(self, num_levels: int = 4, radius: int = 3) -> None:
-        self.num_levels = num_levels
-        self.radius = radius
+    def __init__(self, cfg) -> None:
+        self.cfg = cfg
+        self.num_levels = int(cfg.get("corrblock", {}).get("num_levels", 4))
+        self.radius = int(cfg.get("corrblock", {}).get("radius", 3))
         self.pyramid = None
 
     def build_pyramid(
@@ -23,15 +23,36 @@ class CorrBlock:
         corr = torch.bmm(f1.transpose(-2, -1), f2)  # [T, p, p]
         corr = corr.view(T * p, 1, ht, wd)
 
-        self.pyramid = []
+        pyramid = []
         for i in range(self.num_levels):
             Hi = corr.shape[-2]
             Wi = corr.shape[-1]
 
-            self.pyramid.append(corr.view(T, ht, wd, Hi, Wi))
+            level = corr.view(T, ht, wd, Hi, Wi).half()
+
+            if self.pyramid:
+                pyramid.append(torch.cat([self.pyramid[i], level], dim=0))
+            else:
+                pyramid.append(level)
 
             if i + 1 < self.num_levels:
                 corr = F.avg_pool2d(corr, kernel_size=2, stride=2)
+
+        self.pyramid = pyramid
+
+    def clear_pyramid(self):
+        self.pyramid = None
+
+    def filter_pyramid(self, keep: torch.Tensor):
+        if self.pyramid is None:
+            return
+        self.pyramid = [level[keep] for level in self.pyramid]
+
+    def __getitem__(self, keep: torch.Tensor) -> "CorrBlock":
+        new_corr = CorrBlock(self.cfg)
+        if self.pyramid is not None:
+            new_corr.pyramid = [level[keep] for level in self.pyramid]
+        return new_corr
 
     def __call__(self, coords: torch.Tensor):  # [T, h, w, 2]
         T, ht, wd, _ = coords.shape

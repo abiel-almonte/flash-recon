@@ -1,7 +1,7 @@
 import torch
 
-from structs import Pose, Tangent, Intrinsics
-from utils import (
+from .structs import Pose, Tangent, Intrinsics
+from .utils import (
     assemble_scale_shift_sys,
     assemble_full_sys,
     assemble_motion_only_sys,
@@ -21,7 +21,7 @@ def ba_scale_shift(
     intrinsics: Intrinsics,  # camera intrinsics (fx, fy, cx, cy)
     source_indices: torch.Tensor,  # [E] - source frame indices for each edge
     target_indices: torch.Tensor,  # [E] - target frame indices for each edge
-    mono_disps: torch.Tensor,  # [T, ht, wd] - monocular depth predictions
+    mono_depths: torch.Tensor,  # [T, ht, wd] - monocular depth predictions
     scales: torch.Tensor,  # [T] - scale parameters for depth alignment
     shifts: torch.Tensor,  # [T] - shift parameters for depth alignment
     valid_depth_mask: torch.Tensor,  # [T, ht, wd] - valid depth mask per frame
@@ -58,7 +58,7 @@ def ba_scale_shift(
         target,
         weight,
         damping_keyframes,
-        mono_disps,
+        mono_depths,
         scales,
         shifts,
         valid_depth_mask,
@@ -187,7 +187,7 @@ def full_ba(
     n_poses, ht, wd = disps_window.shape
     keyframe_indices, edge_to_keyframe = torch.unique(ii_window, return_inverse=True)
 
-    damping_keyframes = 0.2 * eta + 1e-7
+    damping_keyframes = eta
 
     # ========== PROJECTIVE JACOBIANS & LINEAR SYSTEM CONSTRUCTION ==========
 

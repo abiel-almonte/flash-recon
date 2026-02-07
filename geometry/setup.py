@@ -20,7 +20,7 @@ def create_module(name):
 
 
 setup(
-    name="geometry_cuda",
+    name="geometry",
     version="0.1.0",
     packages=find_packages("src"),
     package_dir={"": "src"},

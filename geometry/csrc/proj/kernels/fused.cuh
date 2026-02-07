@@ -313,3 +313,122 @@ __global__ void fused_projective_kernel(
         valid[e][i][j][0] = (Xj[2] > 0.2f && Xi[2] > 0.2f) ? 1.0f : 0.0f;
     }
 }
+
+
+Tensor fused_depth_filter_cuda(
+    Tensor t,
+    Tensor q,
+    Tensor disps,
+    Tensor intrinsics,
+    Tensor ii,
+    Tensor thresh
+);
+__global__ void depth_filter_kernel(
+    const PackedAccessor<float, 2> t,
+    const PackedAccessor<float, 2> q,
+    const PackedAccessor<float, 3> disps,
+    const PackedAccessor<float, 1> intr,
+    const PackedAccessor<long, 1> ii,
+    const PackedAccessor<float, 1> thresh,
+    PackedAccessor<float, 3> counter_out
+) {
+	const int m = blockIdx.x;
+	const int neigh_id = blockIdx.y;
+	const int tid = threadIdx.x;
+	const int idx = blockIdx.z * blockDim.x + tid;
+
+    const int n = disps.size(0);
+    const int ht = disps.size(1);
+    const int wd = disps.size(2);
+
+    const float threshold = thresh[m];
+
+    __shared__ int ix;
+    __shared__ int jx;
+    __shared__ float fx, fy, cx, cy;
+    __shared__ float ti[3], tj[3], tij[3];
+    __shared__ float qi[4], qj[4], qij[4];
+
+
+    if (tid == 0) {
+        ix = static_cast<int>(ii[m]);
+        jx = (neigh_id < 3) ? ix - neigh_id - 1 : ix + neigh_id - 2; // droid-slam impl: ix - neigh_id - 1 : ix + neigh_id 
+        fx = intr[0];
+        fy = intr[1];
+        cx = intr[2];
+        cy = intr[3];
+    }
+    __syncthreads();
+
+
+    if (jx < 0 || jx >= n){
+        return;
+    }
+    
+    if (tid == 0){
+        for (int k = 0; k < 3; k++) {
+            ti[k] = t[ix][k];
+            tj[k] = t[jx][k];
+        }
+    
+        for (int k = 0; k < 4; k++) {
+            qi[k] = q[ix][k];
+            qj[k] = q[jx][k];
+        }
+    
+        relSE3(ti, qi,
+               tj, qj,
+               tij, qij);
+    }
+    __syncthreads();
+
+    
+	if (idx < ht*wd) {
+        const int i = idx / wd;
+        const int j = idx % wd;
+        const float u = static_cast<float>(j);
+        const float v = static_cast<float>(i);
+
+        float Xi[4];
+        unproject_pixel(
+            u,
+            v,
+            disps[ix][i][j],
+            fx,
+            fy,
+            cx,
+            cy,
+            Xi
+        );
+
+        float Xj[4];
+        actSE3(tij, qij,
+               Xi, Xj);
+        
+        const float invz = 1.0f / (Xj[2] + EPS);
+
+        const float uj = fx * (Xj[0] * invz) + cx;
+        const float vj = fy * (Xj[1] * invz) + cy;
+        const float invdj = 1.0f / (Xj[3] * invz + EPS);
+
+        const int u0 = __float2int_rd(uj);
+        const int v0 = __float2int_rd(vj);
+
+        if (u0 >= 0 && v0 >= 0 && u0 < wd-1 && v0 < ht-1) {
+            const float invd00 = 1.0f / (disps[jx][v0+0][u0+0] + EPS);
+            const float invd01 = 1.0f / (disps[jx][v0+0][u0+1] + EPS);
+            const float invd10 = 1.0f / (disps[jx][v0+1][u0+0] + EPS);
+            const float invd11 = 1.0f / (disps[jx][v0+1][u0+1] + EPS);
+
+            if (abs(invdj - invd00) < threshold) { 
+                atomicAdd(&counter_out[m][i][j], 1.0f);
+            } else if  (abs(invdj - invd01) < threshold) {
+                atomicAdd(&counter_out[m][i][j], 1.0f);
+            } else if  (abs(invdj - invd10) < threshold) {
+                atomicAdd(&counter_out[m][i][j], 1.0f);
+            } else if  (abs(invdj - invd11) < threshold) {
+                atomicAdd(&counter_out[m][i][j], 1.0f);
+            }
+        }
+    }
+}

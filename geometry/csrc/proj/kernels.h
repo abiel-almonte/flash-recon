@@ -46,4 +46,21 @@ std::vector<Tensor> fused_induced_flow_cuda(
     Tensor jj
 );
 
+Tensor fused_depth_filter_cuda(
+    Tensor t,
+    Tensor q,
+    Tensor disps,
+    Tensor intrinsics,
+    Tensor ii,
+    Tensor thresh
+);
 
+Tensor frame_distance_cuda(
+    Tensor t,
+    Tensor q,
+    Tensor disps,
+    Tensor intrinsics,
+    Tensor ii,
+    Tensor jj,
+    float beta
+);

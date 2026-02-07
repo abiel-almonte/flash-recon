@@ -1,6 +1,7 @@
 #include "kernels.h"
 #include "kernels/simple.cuh"
 #include "kernels/fused.cuh"
+#include "kernels/distance.cuh"
 
 Tensor proj_cuda(Tensor &p, const float fx, const float fy, const float cx, const float cy, const int last_dim) {
     CHECK_INPUT(p);
@@ -176,4 +177,74 @@ std::vector<Tensor> fused_induced_flow_cuda(
     );
 
     return {coords, valid};
+}
+
+Tensor fused_depth_filter_cuda(
+    Tensor t, // [T, 3]
+    Tensor q, // [T, 4]
+    Tensor disps, // [T, H, W]
+    Tensor intrinsics, // [4]
+    Tensor ii, // [M]
+    Tensor thresh // [M]
+) { 
+    CHECK_INPUT(t);
+    CHECK_INPUT(q);
+    CHECK_INPUT(disps);
+    CHECK_INPUT(intrinsics);
+    CHECK_INPUTL(ii);
+    CHECK_INPUT(thresh);
+
+    const int M = ii.size(0);
+    const int H = disps.size(1);
+    const int W = disps.size(2);
+
+    auto opts = disps.options();
+    Tensor count = torch::zeros({M, H, W}, opts);
+
+    dim3 grid(M, 6, (H*W + THREADS - 1) / THREADS); // 6 views max
+    depth_filter_kernel<<<grid, THREADS>>>(
+        t.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        q.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        disps.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+        intrinsics.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+        ii.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
+        thresh.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+        count.packed_accessor32<float, 3, torch::RestrictPtrTraits>()
+    );
+
+    return count;
+}
+
+Tensor frame_distance_cuda(
+    Tensor t,
+    Tensor q,
+    Tensor disps,
+    Tensor intrinsics,
+    Tensor ii,
+    Tensor jj,
+    float beta
+) {
+    CHECK_INPUT(t);
+    CHECK_INPUT(q);
+    CHECK_INPUT(disps);
+    CHECK_INPUT(intrinsics);
+    CHECK_INPUTL(ii);
+    CHECK_INPUTL(jj);
+
+    const int E = ii.size(0);
+    auto opts = disps.options();
+    Tensor dist = torch::zeros({E}, opts);
+
+    frame_distance_kernel<<<E, THREADS>>>(
+        t.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        q.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        disps.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+        intrinsics.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+        ii.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
+        jj.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
+        dist.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+        beta
+    );
+
+    return dist;
 }

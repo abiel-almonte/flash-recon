@@ -1,7 +1,7 @@
 import torch
 
-from structs import Pose, Tangent
-from utils import get_sign, get_eye4
+from .structs import Pose, Tangent
+from .utils import get_sign, get_eye4
 
 from geometry_cuda.lie import (
     se3_log_cuda,
@@ -184,8 +184,8 @@ def matrix_to_pose(T: torch.Tensor) -> Pose:
        SE3 pose
     """
 
-    rot_matrix = T[..., :3, :3]
-    t = T[..., :3, 3]
+    rot_matrix = T[..., :3, :3].contiguous()
+    t = T[..., :3, 3].contiguous()
     q = matrix_to_quat_cuda(rot_matrix)
 
     return Pose(t, q)
