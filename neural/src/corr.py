@@ -7,8 +7,8 @@ from neural_cuda.corr import corr_forward, altcorr_forward
 class CorrBlock:
     def __init__(self, cfg) -> None:
         self.cfg = cfg
-        self.num_levels = int(cfg.get("corrblock", {}).get("num_levels", 4))
-        self.radius = int(cfg.get("corrblock", {}).get("radius", 3))
+        self.num_levels = int(cfg.get("corr_block", {}).get("num_levels", 4))
+        self.radius = int(cfg.get("corr_block", {}).get("radius", 3))
         self.pyramid = None
 
     def build_pyramid(
@@ -55,19 +55,21 @@ class CorrBlock:
         return new_corr
 
     def __call__(self, coords: torch.Tensor):  # [T, h, w, 2]
-        T, ht, wd, _ = coords.shape
+        T, H, W, _ = coords.shape
         coords = coords.permute(0, 3, 1, 2).contiguous()
 
         K = (2 * self.radius + 1) ** 2
         out = torch.empty(
-            T, self.num_levels * K, ht, wd, device=coords.device, dtype=coords.dtype
+            T, self.num_levels * K, H, W, device=coords.device, dtype=coords.dtype
         )
 
         scale = 1
-        for i in range(self.num_levels):
-            out[:, i * K : (i + 1) * K, :, :] = corr_forward(
-                self.pyramid[i], coords / scale, self.radius
+        for lvl in range(self.num_levels):
+            coords_lvl = coords / scale
+            corr = corr_forward(
+                self.pyramid[lvl], coords_lvl, self.radius
             )  # [T, K, h, w]
+            out[:, lvl * K : (lvl + 1) * K, :, :] = corr
             scale <<= 1
 
         return out
