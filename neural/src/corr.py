@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from neural_cuda.corr import corr_forward
+from neural_cuda.corr import corr_forward, altcorr_forward
 
 
 class CorrBlock:
@@ -71,3 +71,42 @@ class CorrBlock:
             scale <<= 1
 
         return out
+
+
+class AltCorrBlock:
+    def __init__(self, cfg, fmaps):
+        self.num_levels = int(cfg.get("altcorr_block", {}).get("num_levels", 4))
+        self.radius = int(cfg.get("altcorr_block", {}).get("radius", 3))
+
+        fmaps = fmaps / 4.0
+        self.pyramid = []
+        for lvl in range(self.num_levels):
+
+            pyramid_level = fmaps.permute(0, 2, 3, 1).contiguous()
+            self.pyramid.append(pyramid_level)
+
+            if lvl + 1 < self.num_levels:
+                fmaps = F.avg_pool2d(fmaps, kernel_size=2, stride=2)
+
+    def __call__(self, coords: torch.Tensor, ii, jj):
+        T, H, W, _ = coords.shape  # [T, H, W, 2]
+        coords = coords.permute(0, 3, 1, 2).contiguous()
+
+        K = (2 * self.radius + 1) ** 2
+        out = torch.empty(
+            T, self.num_levels * K, H, W, device=coords.device, dtype=coords.dtype
+        )
+
+        scale = 1
+        fmap1 = self.pyramid[0][ii]  # [T, H, W, C]
+        for lvl in range(self.num_levels):
+            fmap2_lvl = self.pyramid[lvl][jj]  # [T, H//2**i, W//2**i, C]
+
+            coords_lvl = coords / scale
+            corr = altcorr_forward(
+                fmap1, fmap2_lvl, coords_lvl, self.radius
+            )  # [T, K, H, W]
+            out[:, lvl * K : (lvl + 1) * K, :, :] = corr
+            scale <<= 1
+
+        return out.contiguous()
