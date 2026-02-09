@@ -2,9 +2,11 @@ import os
 import time
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 
 from flash_recon.slam import SLAM
+from neural import MonoDepth
 
 # TUM fr1_desk: native 640x480, crop 8px edges, resize to 512x384
 H_OUT, W_OUT = 384, 512
@@ -21,11 +23,13 @@ CY = (CY_NATIVE - H_EDGE) * H_OUT / H_CROP
 
 DATASET_ROOT = os.environ.get("DATASET_ROOT", "/workspace/datasets/desk")
 WEIGHTS_PATH = os.environ.get("DROID_WEIGHTS", "/workspace/neural/weights/droid.pth")
-MAX_FRAMES = 50
+DEPTH_WEIGHTS = os.environ.get("DEPTH_WEIGHTS", "/workspace/neural/weights/depth_anything_v2_vits.pth")
+MAX_FRAMES = 600
+DEPTH_INPUT_SIZE = 518  # must be multiple of 14
 
 cfg = {
     "device": "cuda:0",
-    "weights": {"droid": WEIGHTS_PATH},
+    "weights": {"droid": WEIGHTS_PATH, "depth": DEPTH_WEIGHTS},
     "cam": {
         "H_out": H_OUT,
         "W_out": W_OUT,
@@ -39,7 +43,7 @@ cfg = {
         "beta": 0.75,
         "warmup": 12,
         "buffer": 512,
-        "max_age": 25,
+        "max_age": 50,
         "max_factors": 75,
         "depth_filter": {"thresh": 0.01, "n_views": 2},
         "local": {
@@ -70,7 +74,6 @@ cfg = {
     "profile": False,
 }
 
-
 def load_tum_rgb_list(root):
     rgb_txt = os.path.join(root, "rgb.txt")
     entries = []
@@ -84,6 +87,8 @@ def load_tum_rgb_list(root):
     entries.sort(key=lambda x: x[0])
     return entries
 
+MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
 def load_and_preprocess(path, device):
     img = np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
@@ -92,17 +97,16 @@ def load_and_preprocess(path, device):
     img = Image.fromarray((img * 255).astype(np.uint8))
     img = img.resize((W_OUT, H_OUT), Image.BILINEAR)
     img = np.array(img, dtype=np.float32) / 255.0
-    return torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).to(device)
-
-
-def make_dummy_mono_depth(device):
-    return torch.ones(H_OUT // 8, W_OUT // 8, device=device)
-
+    frame = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).to(device)
+    return (frame - MEAN.to(device)) / STD.to(device)
 
 def main():
     device = cfg["device"]
     rgb_list = load_tum_rgb_list(DATASET_ROOT)
     print(f"Dataset: {DATASET_ROOT} ({len(rgb_list)} frames, using {MAX_FRAMES})")
+
+    depth_model = MonoDepth(cfg).to(device).eval()
+    print("DepthAnythingV2 loaded")
 
     slam = SLAM(cfg)
     print("SLAM initialized")
@@ -111,10 +115,10 @@ def main():
     try:
         for i, (ts, path) in enumerate(rgb_list[:MAX_FRAMES]):
             frame = load_and_preprocess(path, device)
-            mono_depth = make_dummy_mono_depth(device)
-
+            
             torch.cuda.synchronize()
             t0 = time.perf_counter()
+            mono_depth = depth_model(frame)
             slam(frame, mono_depth)
             torch.cuda.synchronize()
             dt = time.perf_counter() - t0
@@ -152,6 +156,4 @@ def main():
 # python3 -m benchmark.slam_test
 if __name__ == "__main__":
     print("=== Run 1 (includes compile warmup) ===")
-    main()
-    print("\n=== Run 2 (compiled, warm) ===")
     main()
