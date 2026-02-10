@@ -75,12 +75,15 @@ class CorrBlock:
         return out
 
 
-class AltCorrBlock:
-    def __init__(self, cfg, fmaps):
+class AltCorr:
+    def __init__(self, cfg):
         self.num_levels = int(cfg.get("altcorr_block", {}).get("num_levels", 4))
         self.radius = int(cfg.get("altcorr_block", {}).get("radius", 3))
+        self.pyramid = None
 
+    def build_pyramid(self, fmaps):
         fmaps = fmaps / 4.0
+
         self.pyramid = []
         for lvl in range(self.num_levels):
 
