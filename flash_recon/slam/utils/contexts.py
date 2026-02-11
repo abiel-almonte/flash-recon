@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
-from .enums import EdgeStrategy, BAType
+from .enums import BAType
 
 
 @dataclass
@@ -23,6 +23,7 @@ class BAContext:
     scales: Optional[object] = None
     shifts: Optional[object] = None
     valid_depth_mask: Optional[object] = None
+    invalid_mono_frames: Optional[object] = None
 
     # Optimization parameters
     type: str = "poses_depths"
@@ -50,22 +51,3 @@ class BufferSnapshot:
     fmaps: Optional[object] = None
     nets: Optional[object] = None
     inps: Optional[object] = None
-
-
-@dataclass
-class EdgeRequest:
-
-    strategy: EdgeStrategy
-
-    buffer: Optional[BufferSnapshot] = None
-    beta: float = 0.3
-    t0_loop: Optional[int] = None
-
-    t0: int = 0
-    t1: int = 0
-    rad: int = 2
-    nms: int = 2
-    thresh: float = 16.0
-    max_factors: int = -1
-    remove: bool = False
-    loop: bool = False
