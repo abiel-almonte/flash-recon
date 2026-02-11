@@ -61,6 +61,7 @@ class DPTHead(nn.Module):
         out = self.scratch.output_conv2(out)
         return out
 
+
 # DepthAnythingV2
 class MonoDepth(nn.Module):
     def __init__(self, cfg: dict) -> None:
@@ -88,5 +89,7 @@ class MonoDepth(nn.Module):
         )
         depth = F.relu(self.depth_head(features, patch_h, patch_w))
         depth = depth.clamp(min=1e-3)
-        depth = F.interpolate(depth, size=(self.ht, self.wd), mode="bilinear", align_corners=False)
+        depth = F.interpolate(
+            depth, size=(self.ht, self.wd), mode="bilinear", align_corners=False
+        )
         return depth.squeeze(0).squeeze(0)
