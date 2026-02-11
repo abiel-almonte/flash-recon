@@ -1,7 +1,6 @@
 import torch
 import torch.nn.functional as F
 
-from .structs import BAContext, BufferSnapshot, BAType
 from geometry import (
     Pose,
     Intrinsics,
@@ -11,19 +10,25 @@ from geometry import (
     depth_filter,
 )
 
+from .contexts import BAContext, BufferSnapshot
+from .enums import BAType
+
 
 class KeyFrameBuffer:
     def __init__(self, cfg):
         self.device = cfg.get("device", "cuda")
-        self.down_scale = int(cfg.get("cam", {}).get("down_scale", 8))
+        down = int(cfg.get("cam", {}).get("down_scale", 8))
+        self.down_scale = down
+
         H_out = int(cfg.get("cam", {}).get("H_out", 480))
         W_out = int(cfg.get("cam", {}).get("W_out", 640))
         fx = float(cfg.get("cam", {}).get("fx", 300.0))
         fy = float(cfg.get("cam", {}).get("fy", 300.0))
         cx = float(cfg.get("cam", {}).get("cx", W_out / 2.0))
         cy = float(cfg.get("cam", {}).get("cy", H_out / 2.0))
-        ht = H_out // self.down_scale
-        wd = W_out // self.down_scale
+        ht = H_out // down
+        wd = W_out // down
+
         self.iters = int(cfg.get("optim", {}).get("iters_per_call", 2))
         self.ignore_frames = int(cfg.get("tracking", {}).get("warmup", 1))
         self.capacity = int(cfg.get("tracking", {}).get("buffer", 512))
@@ -36,7 +41,9 @@ class KeyFrameBuffer:
 
         # Preallocated state
         self._poses: Pose = identity_pose(self.capacity, device=self.device)
-        self._intrinsics: Intrinsics = Intrinsics(fx, fy, cx, cy, device=self.device)
+        self._intrinsics: Intrinsics = Intrinsics(
+            fx, fy, cx, cy, device=self.device
+        ).downsample(down)
         self._disps = torch.ones(self.capacity, ht, wd, device=self.device)
         self._disps_up = torch.zeros(self.capacity, H_out, W_out, device=self.device)
         self._mono_depths = torch.zeros(self.capacity, ht, wd, device=self.device)
@@ -108,7 +115,10 @@ class KeyFrameBuffer:
         self._valid_depth_mask_small[idx] = self._disps[idx] > 0
 
         if mono_depth is not None:
-            self._mono_depths[idx] = mono_depth
+            mono_disp = torch.where(
+                mono_depth > 0, 1.0 / mono_depth, torch.zeros_like(mono_depth)
+            )
+            self._mono_depths[idx] = mono_disp
         if fmap is not None:
             self.fmaps[idx] = fmap
         if net is not None:
@@ -119,11 +129,14 @@ class KeyFrameBuffer:
         self.needs_update[idx] = True
         self._count += 1
 
-    def propagate(self):
+    def propagate(self, use_init_mean=False):
         idx = self._count
         if idx > 0 and idx < self.capacity:
             self._poses[idx] = self._poses[idx - 1]
-            self._disps[idx] = self._disps[idx - 1].mean()
+            if use_init_mean:
+                self._disps[idx] = self._disps[max(0, idx - 4) : idx].mean()
+            else:
+                self._disps[idx] = self._disps[idx - 1].mean()
 
     def remove(self, idx: int) -> None:
         if idx < 0 or idx >= self._count:
@@ -199,7 +212,6 @@ class KeyFrameBuffer:
         depths = 1.0 / (disps_to_update.clamp_min(1e-5))
         thresh = self.depth_filter_thresh * depths.flatten(1).mean(dim=-1)  # [M]
 
-        # Slice poses to valid frames so kernel neighbor bounds are correct
         poses = self._poses[: self._count]
         count = depth_filter(poses, disps, intrinsics, update_indices, thresh)
         depths[count < self.depth_filter_n_views] = torch.nan
@@ -241,7 +253,7 @@ class KeyFrameBuffer:
 
         self.set_needs_update(slice(0, self._count))
 
-    def create_ba_context(self, type: BAType) -> BAContext:
+    def create_ba_context(self, ba_type: BAType) -> BAContext:
         T = self._count
         if T == 0:
             raise RuntimeError("Buffer is empty")
@@ -249,7 +261,17 @@ class KeyFrameBuffer:
         poses = self._poses[:T]
         disps = self._disps[:T]
 
-        if type == BAType.DEPTH_SCALE:
+        if ba_type == BAType.POSE_DEPTH:
+            return BAContext(
+                type=ba_type,
+                poses=poses,
+                disps=disps,
+                intrinsics=self._intrinsics,
+                iters=self.iters,
+                n=T,
+            )
+
+        elif ba_type == BAType.DEPTH_SCALE:
             mono_depths = self._mono_depths[:T]
 
             self.update_vmask(up=False)
@@ -259,8 +281,21 @@ class KeyFrameBuffer:
             scales = self._scales[:T]
             shifts = self._shifts[:T]
 
-            ctx = BAContext(
-                type=type,
+            # mono filtering
+            fitted = scales[:, None, None] * mono_depths + shifts[:, None, None]
+            error = ((fitted - disps).abs() * vmask).sum(dim=[1, 2]) / vmask.sum(
+                dim=[1, 2]
+            ).clamp_min(1)
+            avg_disps = disps.mean(dim=[1, 2])
+            invalid_mono = (
+                (error / avg_disps.clamp_min(1e-7) > 0.1)
+                | error.isnan()
+                | (scales < 0)
+                | (vmask.sum(dim=[1, 2]) < vmask.shape[1] * vmask.shape[2] * 0.5)
+            )
+
+            return BAContext(
+                type=ba_type,
                 poses=poses,
                 disps=disps,
                 intrinsics=self._intrinsics,
@@ -268,34 +303,50 @@ class KeyFrameBuffer:
                 scales=scales,
                 shifts=shifts,
                 valid_depth_mask=vmask,
+                invalid_mono_frames=invalid_mono,
                 iters=self.iters,
-                ignore_frames=self.ignore_frames,
+                ignore_frames=0,
             )
-        elif type == BAType.POSE_DEPTH:
-            ctx = BAContext(
-                type=type,
-                poses=poses,
-                disps=disps,
-                intrinsics=self._intrinsics,
-                iters=self.iters,
-                n=T,
-            )
-        elif type == BAType.MOTION_ONLY:
-            ctx = BAContext(
-                type=type,
+
+        elif ba_type == BAType.MOTION_ONLY:
+            return BAContext(
+                type=ba_type,
                 poses=poses,
                 disps=disps,
                 intrinsics=self._intrinsics,
                 iters=self.iters,
             )
 
-        return ctx
+        return None
+
+    def filter_mono_edges(self, invalid_mono_frames, ii, jj, target, weight, eta):
+        if invalid_mono_frames is None:
+            return ii, jj, target, weight, eta
+
+        invalid_idx = torch.where(invalid_mono_frames)[0]
+        if invalid_idx.numel() == 0:
+            return ii, jj, target, weight, eta
+
+        mask = torch.zeros(ii.shape[0], dtype=torch.bool, device=ii.device)
+        for idx in invalid_idx:
+            mask = mask | (ii == idx) | (jj == idx)
+
+        keep = ~mask
+        ii_f, jj_f = ii[keep], jj[keep]
+
+        # eta is indexed by unique(ii), so filter to match
+        orig_unique = torch.unique(ii)
+        new_unique = torch.unique(ii_f)
+        valid = torch.tensor([u in new_unique for u in orig_unique]).to(ii.device)
+
+        return ii_f, jj_f, target[keep], weight[keep], eta[valid]
 
     def apply_ba_result(self, ctx: BAContext):
         T = self._count
 
         self._poses[:T] = ctx.poses
         self._disps[:T] = ctx.disps
+        self._disps[:T].clamp_(min=1e-5)
 
         if ctx.scales is not None:
             self._scales[:T] = ctx.scales
