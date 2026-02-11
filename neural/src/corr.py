@@ -26,6 +26,8 @@ class Corr:
             Wi = (Wi + 1) // 2
         self.num_edges = 0
 
+    @torch.autocast("cuda", enabled=True)
+    @torch.no_grad()
     def build_pyramid(
         self,
         feature1: torch.Tensor,
@@ -40,7 +42,7 @@ class Corr:
         f1 = feature1.reshape(T, c, p) / 4.0
         f2 = feature2.reshape(T, c, p) / 4.0
 
-        corr = torch.bmm(f1.transpose(-2, -1), f2) # [T, p, p]
+        corr = torch.bmm(f1.transpose(-2, -1), f2)  # [T, p, p]
         corr = corr.half()
         corr = corr.view(T * p, 1, ht, wd)
 
@@ -83,7 +85,7 @@ class Corr:
             coords_lvl = coords / scale
             corr = corr_forward(
                 self.pyramid[lvl][: self.num_edges], coords_lvl, self.radius
-            ) # [T, K, H, W]
+            )  # [T, K, H, W]
             out[:, lvl * K : (lvl + 1) * K, :, :] = corr
             scale <<= 1
 
@@ -107,6 +109,9 @@ class AltCorr:
 
             if lvl + 1 < self.num_levels:
                 fmaps = F.avg_pool2d(fmaps, kernel_size=2, stride=2)
+
+    def clear(self):
+        self.pyramid = None
 
     def __call__(self, coords: torch.Tensor, ii, jj):
         T, H, W, _ = coords.shape  # [T, H, W, 2]
