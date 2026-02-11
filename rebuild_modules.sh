@@ -1,5 +1,7 @@
 #!/bin/bash
 
+export LD_LIBRARY_PATH="/workspace/.venv/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}"
+
 cd /workspace/geometry \
 && rm -rf build *.egg-info \
 && uv pip install -e . --no-build-isolation \
