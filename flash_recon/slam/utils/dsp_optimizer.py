@@ -1,7 +1,8 @@
 from dataclasses import replace
 
 from geometry import full_ba, ba_scale_shift, motion_only_ba
-from .structs import BAContext, BAType
+from .contexts import BAContext
+from .enums import BAType
 
 
 class DSPOptimizer:
