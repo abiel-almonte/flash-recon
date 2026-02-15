@@ -38,6 +38,7 @@ droid-slam = [
 flash-recon = [
     "geometry @ /workspace/geometry",
     "neural @ /workspace/neural",
+    "gsplat",
     "visionrt @ git+https://github.com/abiel-almonte/visionrt.git",
 ]
 
