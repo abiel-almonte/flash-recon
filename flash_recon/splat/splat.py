@@ -97,9 +97,7 @@ class Splat:
             return False
 
         world, colors, scales, viewmat, pixel_uv = result
-        self.buffer.append(
-            keyframe.frame, viewmat, world, colors, scales, pixel_uv
-        )
+        self.buffer.append(keyframe.frame, viewmat, world, colors, scales, pixel_uv)
 
         return True
 

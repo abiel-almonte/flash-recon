@@ -84,7 +84,9 @@ class GaussianBuffer:
         )
 
         self.gts = torch.cat([self.gts, gt.unsqueeze(0)], dim=0)
-        self.viewmats = torch.cat([self.viewmats, viewmat.squeeze(0).unsqueeze(0)], dim=0)
+        self.viewmats = torch.cat(
+            [self.viewmats, viewmat.squeeze(0).unsqueeze(0)], dim=0
+        )
         self._n_keyframes += 1
 
     def prune(self, min_opacity=0.01, max_scale=None):
