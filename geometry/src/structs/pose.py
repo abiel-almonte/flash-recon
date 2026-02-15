@@ -69,5 +69,10 @@ class Pose:
         self.t = self.t.to(device)
         self.q = self.q.to(device)
 
+    def clone(self) -> "Pose":
+        t = self.t.clone()
+        q = self.q.clone()
+        return Pose(t, q)
+
     def __repr__(self):
         return f"Pose(t={self.t}, q={self.q})"
