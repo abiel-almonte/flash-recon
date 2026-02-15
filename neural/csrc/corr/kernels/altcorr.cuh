@@ -1,3 +1,4 @@
+// Adapted from DROID-SLAM (BSD 3-Clause)
 #pragma once
 #include "common/common.h"
 
