@@ -1,6 +1,6 @@
 services:
   flash-recon:
-    container_name: flash-recon
+    container_name: flash-recon-${USER}
     image: flash-recon:latest
     build:
       context: .
@@ -8,8 +8,8 @@ services:
     command: ["tail", "-f","/dev/null"]
     gpus: all
     ports:
-      - "9090:9090"
-      - "9876:9876"
+      - "${HOST_PORT_1:-9090}:9090"
+      - "${HOST_PORT_2:-9876}:9876"
     cap_add:
       - SYS_ADMIN
     security_opt:
@@ -18,5 +18,9 @@ services:
       - /dev/v4l/by-id/usb-Global_Shutter_Camera_Global_Shutter_Camera_01.00.00-video-index0:/dev/mapping-cam
     volumes:
       - .:/workspace
+      - uv-cache:/root/.cache/uv
+
+volumes:
+  uv-cache:
     tty: true
     stdin_open: true
