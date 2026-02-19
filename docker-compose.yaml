@@ -19,8 +19,8 @@ services:
     volumes:
       - .:/workspace
       - uv-cache:/root/.cache/uv
+    tty: true
+    stdin_open: true
 
 volumes:
   uv-cache:
-    tty: true
-    stdin_open: true
