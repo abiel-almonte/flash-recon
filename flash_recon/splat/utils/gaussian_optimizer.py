@@ -94,7 +94,7 @@ class GaussianOptimizer:
 
         self.ssim_weight = float(optim_cfg.get("ssim_weight", 0.2))
         self.opacity_reg = float(optim_cfg.get("opacity_reg", 0.01))
-        self.scale_reg = float(optim_cfg.get("scale_reg", 0.02))
+        self.isotropic_reg = float(optim_cfg.get("isotropic_reg", 10))
 
         self.lr = {
             "means": float(lr_cfg.get("means", 1e-4)),
@@ -174,7 +174,8 @@ class GaussianOptimizer:
         loss = (
             (1.0 - self.ssim_weight) * l1_loss
             + self.ssim_weight * ssim_loss
-            + 10 * isotropic_loss
+            + self.opacity_reg * opacities.mean()
+            + self.isotropic_reg * isotropic_loss
             + depth_loss
         )
 
