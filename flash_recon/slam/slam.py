@@ -2,7 +2,7 @@ import torch
 
 from geometry import identity_pose, compute_distance
 
-from .utils import KeyFrameBuffer, LocalGraph, GlobalGraph
+from .utils import KeyFrameBuffer, LocalGraph, GlobalGraph, SLAMSnapshot
 from .video_odometry import VideoOdometry
 
 
@@ -45,12 +45,37 @@ class SLAM:
         self.global_thresh = float(bc["thresh"])
         self.global_radius = int(bc["radius"])
         self.global_nms = int(bc["nms"])
+        self.global_normalize_enabled = bool(bc["normalize"])
 
         self.motion_thresh = float(cfg["tracking"]["motion_filter"]["thresh"])
 
         self.prev_fmap = None
         self.prev_net = None
         self.prev_inp = None
+
+    @property
+    def n_keyframes(self):
+        return len(self.buffer)
+
+    @property
+    def snapshot(self):
+        count = len(self.buffer)
+        poses = self.buffer._poses
+        disps = self.buffer._disps_up
+        vmask = self.buffer.get_vmask()
+        intrinsics = self.buffer._intrinsics
+        return SLAMSnapshot(
+            poses=poses[:count],
+            disps=disps[:count],
+            vmask=vmask[:count],
+            intrinsics=intrinsics,
+            version=self.buffer.version,
+        )
+
+    @property
+    def latest_keyframe(self):
+        idx = len(self.buffer) - 1
+        return self.buffer.get_keyframe(idx)
 
     def _try_add_keyframe(self, frame, mono_depth) -> bool:
         fmap, net, inp = self.vo.extract(frame)
@@ -122,7 +147,8 @@ class SLAM:
         return loop_graph, t_start_loop + 1
 
     def _create_global_graph(self):
-        self.buffer.normalize()
+        if self.global_normalize_enabled:
+            self.buffer.normalize()
 
         t_end = len(self.buffer)
         max_factors = ((self.global_radius + 2) * 2) * (t_end)
