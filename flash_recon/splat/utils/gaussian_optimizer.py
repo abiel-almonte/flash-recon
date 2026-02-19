@@ -2,7 +2,9 @@ import gsplat
 import torch
 import torch.nn.functional as F
 
-from geometry import Intrinsics
+from geometry import Pose, Intrinsics, quat_to_matrix_cuda
+
+from .gaussian_buffer import GaussianBuffer
 
 
 def _ssim(img1, img2, window_size=11):
@@ -36,6 +38,42 @@ def _ssim(img1, img2, window_size=11):
     )
 
     return ssim_map.mean()
+
+
+def _multiview_depth_error(
+    poses: Pose,
+    depths: torch.Tensor,
+    intrinsics: Intrinsics,
+    means: torch.Tensor,
+    H: int,
+    W: int,
+) -> torch.Tensor:
+    R = quat_to_matrix_cuda(poses.q)  # [K, 3, 3]
+    cam = torch.einsum("kij,nj->kni", R, means) + poses.t[:, None, :]  # [K, N, 3]
+    depth_proj = cam[..., 2].clamp(1e-5)  # [K, N] depth value for each key frames
+
+    u = intrinsics.fx * cam[..., 0] / depth_proj + intrinsics.cx  # [K, N]
+    v = intrinsics.fy * cam[..., 1] / depth_proj + intrinsics.cy
+
+    valid = (cam[..., 2] > 0) & ((u > 0) & (u < W)) & ((v > 0) & (v < H))
+
+    u = 2 * u / (W - 1) - 1  # normalize grid
+    v = 2 * v / (H - 1) - 1
+    grid = torch.stack([u, v], dim=-1)  # [K, N, 2]
+
+    depth_map = F.grid_sample(
+        depths.unsqueeze(1),  # [K, 1, H, W]
+        grid.unsqueeze(2),  # [K, N, 1, 2]
+        align_corners=True,
+    )  # [K, 1, N, 1]
+    depth_map = depth_map.squeeze(1).squeeze(-1)  # [K, N]
+
+    error = (depth_proj - depth_map).abs() / depth_map.clamp(1e-5)
+    error = error * valid
+
+    error = error.sum(dim=0)  # [N]
+    valid_counts = valid.sum(dim=0).clamp(1)
+    return error / valid_counts  # [N]
 
 
 class GaussianOptimizer:
@@ -87,16 +125,19 @@ class GaussianOptimizer:
 
     def __call__(
         self,
-        viewmats,
-        gt_colors,
-        buffer,
+        indices,
+        buffer: GaussianBuffer,
     ):
+        viewmats = buffer.viewmats[indices]
+        gt_colors = buffer.gts[indices]
+        gt_depths = buffer.gt_depths[indices]
+
         colors = buffer.colors.clamp(0, 1)
         scales = buffer.scales.exp()
         opacities = buffer.alphas.sigmoid()
         quats = buffer.quats / buffer.quats.norm(dim=-1, keepdim=True)
 
-        rendered, *_ = gsplat.rasterization(
+        rendered, _, meta = gsplat.rasterization(
             means=buffer.means,
             quats=quats,
             scales=scales,
@@ -111,14 +152,34 @@ class GaussianOptimizer:
         l1_loss = (rendered - gt_colors).abs().mean()
         ssim_loss = 1.0 - _ssim(rendered, gt_colors)
 
+        if buffer._n_keyframes > 12:  # after slam bootstrapping
+            poses = buffer.poses[indices]
+
+            depth_error = _multiview_depth_error(
+                poses=poses,
+                depths=gt_depths,
+                intrinsics=buffer.intrinsics,
+                means=buffer.means,
+                H=self.H,
+                W=self.W,
+            )
+
+            depth_loss = (depth_error - 0.05).clamp(0).mean()
+
+        else:
+            depth_loss = 0.0
+
+        isotropic_loss = (scales - scales.mean(dim=-1, keepdim=True)).abs().mean()
+
         loss = (
             (1.0 - self.ssim_weight) * l1_loss
             + self.ssim_weight * ssim_loss
-            + self.opacity_reg * opacities.mean()
-            + self.scale_reg * scales.mean()
+            + 10 * isotropic_loss
+            + depth_loss
         )
 
         loss.backward()
+
         self._optimizer.step()
         self._optimizer.zero_grad()
-        return loss.item()
+        return loss.item(), meta
