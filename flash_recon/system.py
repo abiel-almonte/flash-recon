@@ -157,8 +157,8 @@ class System:
             torch.cuda.empty_cache()
 
             if self._persist:
-                while True:
-                    self._splatter_thread.join()
+                self._splatter_thread.join()
+
         finally:
             self._running = False
             self._splatter_thread.join()
