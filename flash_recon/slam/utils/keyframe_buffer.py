@@ -248,21 +248,15 @@ class KeyFrameBuffer:
             self._valid_depth_mask_small[update_indices] = masks
 
     def upsample_disps(self, source_indices, upmask):
-        disps = self._disps[source_indices].unsqueeze(-1)
-        edges, ht, wd, dim = disps.shape
+        disps = self._disps[source_indices]
 
-        disps = disps.permute(0, 3, 1, 2).contiguous()
-        mask = upmask.view(edges, 1, 9, 8, 8, ht, wd)
-        mask = torch.softmax(mask, dim=2)
+        self._disps_up[source_indices] = F.interpolate(
+            disps.unsqueeze(1),
+            scale_factor=self.down_scale,
+            mode="bilinear",
+            align_corners=False,
+        ).squeeze(1)
 
-        up_disps = F.unfold(disps, kernel_size=(3, 3), padding=(1, 1))
-        up_disps = up_disps.view(edges, dim, 9, 1, 1, ht, wd)
-
-        up_disps = torch.sum(mask * up_disps, dim=2, keepdim=False)
-        up_disps = up_disps.permute(0, 4, 2, 5, 3, 1).contiguous()
-        up_disps = up_disps.reshape(edges, 8 * ht, 8 * wd, dim).squeeze(-1)
-
-        self._disps_up[source_indices] = up_disps
         self.set_needs_update(source_indices)
 
     def normalize(self):
