@@ -24,3 +24,4 @@ services:
 
 volumes:
   uv-cache:
+    external: true
