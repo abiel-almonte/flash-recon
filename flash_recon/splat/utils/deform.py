@@ -59,7 +59,7 @@ def deform_gaussians(
     cam_pts_scaled = scale_ratio * cam_pts
     new_means = torch.einsum("nij,nj->ni", nc[:, :3, :3], cam_pts_scaled) + nc[:, :3, 3]
 
-    new_scales = scales + scale_ratio.log()
+    new_scales = scales + scale_ratio.clamp(min=1e-6).log()
 
     # per-keyframe relative rotation, indexed to per-gaussian
     rel = pose_mul(pose_inv(new_poses), old_poses)
