@@ -154,7 +154,6 @@ class System:
                 self._slammer(frame, raw)
 
             self._slam_done = True
-            _logger.log("SLAM finished - splatter running full speed")
             torch.cuda.empty_cache()
 
             if self._persist:
