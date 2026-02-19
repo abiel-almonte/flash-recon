@@ -10,8 +10,8 @@ import {
     fragmentShaderSource
 } from "./math.js";
 
-const FX = 1159.588;
-const FY = 1164.660;
+let FX = 300;
+let FY = 300;
 
 function createWorker(self) {
     let buffer;
@@ -200,12 +200,12 @@ function createWorker(self) {
     };
 }
 
-let viewMatrix = [
-    0.47, 0.04, 0.88, 0, -0.11, 0.99, 0.02, 0, -0.88, -0.11, 0.47, 0, 0.07,
-    0.03, 6.55, 1,
-];
-
 async function main() {
+    let viewMatrix = [
+        0.47, 0.04, 0.88, 0, -0.11, 0.99, 0.02, 0, -0.88, -0.11, 0.47, 0, 0.07,
+        0.03, 6.55, 1,
+    ];
+
     try {
         viewMatrix = JSON.parse(decodeURIComponent(location.hash.slice(1)));
     } catch (err) {}
@@ -228,8 +228,20 @@ async function main() {
         const view = new DataView(e.data);
         const type = view.getUint8(0);
 
+        if (type === 0x03) {
+            // intrinsics: [type:u8][fx:f32][fy:f32]
+            const buf = new ArrayBuffer(8);
+            new Uint8Array(buf).set(new Uint8Array(e.data, 1, 8));
+            const fbuf = new Float32Array(buf);
+            FX = fbuf[0];
+            FY = fbuf[1];
+            console.log(`Intrinsics received: fx=${FX}, fy=${FY}`);
+            resize();
+            return;
+        }
+
         if (type === 0x02) {
-            // camera pose: use first one as origin, ignore the rest
+            // camera pose: use first one as origin
             if (!originSet) {
                 const buf = new ArrayBuffer(64);
                 new Uint8Array(buf).set(new Uint8Array(e.data, 1, 64));
@@ -240,25 +252,13 @@ async function main() {
         }
 
         if (type === 0x00) {
-            // full replace: [type:u8][n:u32][data]
+            // full replace: [type:u8][n:u32][v:u32][data]
             const n = view.getUint32(1, true);
+            const version = view.getUint32(5, true);
+            console.log(`Buffer received: version=${version}`);
             gaussianBuffer = new ArrayBuffer(n * 32);
-            new Uint8Array(gaussianBuffer).set(new Uint8Array(e.data, 5));
+            new Uint8Array(gaussianBuffer).set(new Uint8Array(e.data, 9));
             worker.postMessage({ buffer: gaussianBuffer, vertexCount: n });
-        } else if (type === 0x01) {
-            // chunk update: [type:u8][offset:u32][count:u32][data]
-            if (!gaussianBuffer) return;
-            const offset = view.getUint32(1, true);
-            const count = view.getUint32(5, true);
-            const byteOffset = offset * 32;
-            if (byteOffset + count * 32 > gaussianBuffer.byteLength) return;
-            const dst = new Uint8Array(gaussianBuffer);
-            const src = new Uint8Array(e.data, 9, count * 32);
-            dst.set(src, byteOffset);
-            worker.postMessage({
-                buffer: gaussianBuffer,
-                vertexCount: gaussianBuffer.byteLength / 32,
-            });
         }
     };
 
@@ -336,6 +336,7 @@ async function main() {
 
     window.addEventListener("resize", resize);
     resize();
+
 
     worker.onmessage = (e) => {
         if (e.data.texdata) {
