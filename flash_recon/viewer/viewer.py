@@ -16,6 +16,7 @@ from ..splat import SplatSnapshot
 
 BYTES_PER_GAUSSIAN = 32
 
+
 class _HttpCtx:
     def __init__(self, port):
         self.port = port

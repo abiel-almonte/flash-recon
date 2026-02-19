@@ -114,7 +114,7 @@ class GaussianBuffer:
 
             if max_scale is not None:
                 mask = mask & (self.scales.exp().max(dim=-1).values < max_scale)
-            
+
             old_enough = self.kf_ids < (self._n_keyframes - 10)
             mask = mask & (~old_enough | (self.n_touched >= 60))
 
