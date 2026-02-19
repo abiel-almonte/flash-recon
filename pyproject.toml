@@ -39,6 +39,7 @@ flash-recon = [
     "geometry @ /workspace/geometry",
     "neural @ /workspace/neural",
     "gsplat",
+    "websockets",
     "visionrt @ git+https://github.com/abiel-almonte/visionrt.git",
 ]
 
