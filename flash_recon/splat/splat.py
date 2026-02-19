@@ -68,14 +68,21 @@ class Splat:
 
         indices = torch.randperm(len(self.buffer))[: self.n_views]
 
-        viewmats = self.buffer.viewmats[indices]
-        gt_colors = self.buffer.gts[indices]
-
-        loss = self.optimizer(
-            viewmats=viewmats,
-            gt_colors=gt_colors,
+        loss, meta = self.optimizer(
+            indices=indices,
             buffer=self.buffer,
         )
+
+        n_touched = torch.zeros(
+            self.buffer.n_gaussians, device=self.device
+        ).scatter_add_(
+            0,
+            meta["gaussian_ids"],
+            torch.ones(meta["gaussian_ids"].shape[0], device=self.device),
+        )
+        n_touched = (n_touched > 0).float()
+
+        self.buffer.accumulate_touched(n_touched)
 
         self.buffer.clip()
 
@@ -97,8 +104,18 @@ class Splat:
         if result is None:
             return False
 
+        gt_depth = 1 / keyframe.disps.clamp(1e-5)
         world, colors, scales, viewmat, pixel_uv = result
-        self.buffer.append(keyframe.frame, viewmat, world, colors, scales, pixel_uv)
+        self.buffer.append(
+            keyframe.frame,
+            gt_depth,
+            keyframe.poses,
+            viewmat,
+            world,
+            colors,
+            scales,
+            pixel_uv,
+        )
 
         return True
 
