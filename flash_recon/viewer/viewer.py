@@ -80,11 +80,11 @@ class Viewer:
             if self._camera_package is not None:
                 await websocket.send(self._camera_package)
             while True:
-                if self.is_new_version() and self._package is not None:
+                if self._last_version < self._version and self._package is not None:
                     await websocket.send(self._package)
                     self._last_version = self._version
                 else:
-                    await asyncio.sleep(1 / 30)
+                    await asyncio.sleep(1 / 90)
         except (websockets.ConnectionClosed, AttributeError):
             pass
 
@@ -129,7 +129,7 @@ class Viewer:
         buf[:, 28:32] = quat
         return buf
 
-    def _create_package(self, snapshot):
+    def _create_package(self, snapshot, version):
         """Type 0x00: full replace. [type:u8][n:u32][v:32][data]"""
 
         prep = self._prepare(snapshot)
@@ -141,7 +141,7 @@ class Viewer:
         header = (
             bytes([0x00])
             + n.to_bytes(4, byteorder="little")
-            + self._version.to_bytes(4, byteorder="little")
+            + version.to_bytes(4, byteorder="little")
         )
         return header + buf.tobytes()
 
@@ -159,11 +159,14 @@ class Viewer:
             self._serve_thread.start()
             self._served = True
 
-        self._version = snapshot.version
-        if not self.is_new_version():
+        version = snapshot.version
+        if not self._last_version < version:
             return False
 
-        self._package = self._create_package(snapshot)
-        if self._package is None:
+        package = self._create_package(snapshot, version)
+        if package is None:
             return False
+
+        self._package = package
+        self._version = version
         return True
