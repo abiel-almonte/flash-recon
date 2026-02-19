@@ -22,8 +22,4 @@ ENV UV_LINK_MODE=copy
 ENV PATH="/root/.local/bin:$PATH"
 ENV LD_LIBRARY_PATH="/workspace/.venv/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}"
 
-RUN wget -O libtorch.zip https://download.pytorch.org/libtorch/cu128/libtorch-shared-with-deps-2.10.0%2Bcu128.zip \
-    && unzip libtorch.zip -d /opt \
-    && rm libtorch.zip
-
 WORKDIR /workspace
