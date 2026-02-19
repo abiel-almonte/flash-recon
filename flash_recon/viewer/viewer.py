@@ -1,6 +1,7 @@
 import sys
 import os
 import atexit
+import struct
 
 import subprocess
 import asyncio
@@ -14,8 +15,6 @@ from threading import Thread
 from ..splat import SplatSnapshot
 
 BYTES_PER_GAUSSIAN = 32
-CHUNK_SIZE = 8192  # gaussians per chunk update
-
 
 class _HttpCtx:
     def __init__(self, port):
@@ -40,25 +39,6 @@ class _HttpCtx:
         self._http.terminate()
 
 
-def _pack_gaussians(means, scales, colors, alpha, quats, n):
-    """[mean:u32][scale:u32][rgba:u8][quat:u8]"""
-
-    mean = means.to(torch.float32).cpu().numpy()
-    scale = scales.to(torch.float32).cpu().numpy()
-    rgb = colors.to(torch.uint8).cpu().numpy()
-    a = alpha.to(torch.uint8).cpu().numpy()
-    quat = quats.to(torch.uint8).cpu().numpy()
-
-    rgba = np.concatenate([rgb, a.reshape(-1, 1)], 1)
-
-    buf = np.empty((n, BYTES_PER_GAUSSIAN), dtype=np.uint8)
-    buf[:, 0:12] = mean.view(np.uint8).reshape(n, 12)
-    buf[:, 12:24] = scale.view(np.uint8).reshape(n, 12)
-    buf[:, 24:28] = rgba
-    buf[:, 28:32] = quat
-    return buf
-
-
 class Viewer:
     def __init__(self, cfg) -> None:
         sc = cfg.get("viewer", {}).get("server", {})
@@ -67,11 +47,17 @@ class Viewer:
         cc = cfg.get("viewer", {}).get("client", {})
         self._client_port = int(cc.get("port", 9876))
 
+        cam = cfg.get("cam", {})
+        self._fx = float(cam.get("fx", 300.0))
+        self._fy = float(cam.get("fy", 300.0))
+
         self._served = False
         self._package = None
         self._camera_package = None
-        self._last_n = 0
-        self._chunk_offset = 0
+
+        self._version = 0
+        self._last_version = 0
+
         self._serve_thread = Thread(target=self._serve, daemon=True)
 
     def _serve(self):
@@ -86,13 +72,17 @@ class Viewer:
 
     async def send(self, websocket: websockets.ServerConnection):
         try:
+
+            await websocket.send(
+                bytes([0x03]) + struct.pack("<ff", self._fx, self._fy)
+            )  # send intrinsics
+
+            if self._camera_package is not None:
+                await websocket.send(self._camera_package)
             while True:
-                if self._camera_package is not None:
-                    await websocket.send(self._camera_package)
-                    self._camera_package = None
-                if self._package is not None:
+                if self.is_new_version() and self._package is not None:
                     await websocket.send(self._package)
-                    self._package = None
+                    self._last_version = self._version
                 else:
                     await asyncio.sleep(1 / 30)
         except (websockets.ConnectionClosed, AttributeError):
@@ -121,45 +111,38 @@ class Viewer:
         except (IndexError, RuntimeError):
             return None
 
-    def _package_full(self, snapshot):
-        """Type 0x00: full replace. [type:u8][n:u32][data]"""
+    def _pack_gaussians(self, means, scales, colors, alpha, quats, n):
+        """[mean:u32][scale:u32][rgba:u8][quat:u8]"""
+
+        mean = means.to(torch.float32).cpu().numpy()
+        scale = scales.to(torch.float32).cpu().numpy()
+        rgb = colors.to(torch.uint8).cpu().numpy()
+        a = alpha.to(torch.uint8).cpu().numpy()
+        quat = quats.to(torch.uint8).cpu().numpy()
+
+        rgba = np.concatenate([rgb, a.reshape(-1, 1)], 1)
+
+        buf = np.empty((n, BYTES_PER_GAUSSIAN), dtype=np.uint8)
+        buf[:, 0:12] = mean.view(np.uint8).reshape(n, 12)
+        buf[:, 12:24] = scale.view(np.uint8).reshape(n, 12)
+        buf[:, 24:28] = rgba
+        buf[:, 28:32] = quat
+        return buf
+
+    def _create_package(self, snapshot):
+        """Type 0x00: full replace. [type:u8][n:u32][v:32][data]"""
+
         prep = self._prepare(snapshot)
         if prep is None:
             return None
         means, scales, colors, alpha, quats, n = prep
-        buf = _pack_gaussians(means, scales, colors, alpha, quats, n)
+        buf = self._pack_gaussians(means, scales, colors, alpha, quats, n)
 
-        header = bytes([0x00]) + n.to_bytes(4, byteorder="little")
-        return header + buf.tobytes()
-
-    def _package_chunk(self, snapshot):
-        """Type 0x01: chunk update. [type:u8][offset:u32][count:u32][data]"""
-        prep = self._prepare(snapshot)
-        if prep is None:
-            return None
-        means, scales, colors, alpha, quats, n = prep
-
-        offset = self._chunk_offset
-        if offset >= n:
-            offset = 0
-
-        end = min(offset + CHUNK_SIZE, n)
-        count = end - offset
-
-        buf = _pack_gaussians(
-            means[offset:end],
-            scales[offset:end],
-            colors[offset:end],
-            alpha[offset:end],
-            quats[offset:end],
-            count,
+        header = (
+            bytes([0x00])
+            + n.to_bytes(4, byteorder="little")
+            + self._version.to_bytes(4, byteorder="little")
         )
-
-        self._chunk_offset = end if end < n else 0
-
-        header = bytes([0x01])
-        header += offset.to_bytes(4, byteorder="little")
-        header += count.to_bytes(4, byteorder="little")
         return header + buf.tobytes()
 
     def set_camera(self, w2c: torch.Tensor):
@@ -168,28 +151,19 @@ class Viewer:
         mat = w2c.to(torch.float32).cpu().numpy().T
         self._camera_package = bytes([0x02]) + mat.tobytes()
 
+    def is_new_version(self):
+        return self._last_version < self._version
+
     def __call__(self, snapshot: SplatSnapshot):
         if not self._served:
             self._serve_thread.start()
             self._served = True
 
-        if snapshot.n != self._last_n:
-            package = self._package_full(snapshot)
-            if package is None:
-                return False
+        self._version = snapshot.version
+        if not self.is_new_version():
+            return False
 
-            self._last_n = snapshot.n
-            self._chunk_offset = 0
-        else:
-            package = self._package_chunk(snapshot)
-            if package is None:
-                return False
-
-        self._package = package
+        self._package = self._create_package(snapshot)
+        if self._package is None:
+            return False
         return True
-
-
-if __name__ == "__main__":
-    v = Viewer({})
-
-    v._serve()
