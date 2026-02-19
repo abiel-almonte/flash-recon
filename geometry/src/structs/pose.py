@@ -74,5 +74,10 @@ class Pose:
         q = self.q.clone()
         return Pose(t, q)
 
+    def concatenate(self, other: "Pose") -> "Pose":
+        t = torch.concat([self.t, other.t], dim=0)
+        q = torch.concat([self.q, other.q], dim=0)
+        return Pose(t, q)
+
     def __repr__(self):
         return f"Pose(t={self.t}, q={self.q})"
