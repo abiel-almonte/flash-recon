@@ -12,6 +12,7 @@ class SplatSnapshot:
     quats: Optional[torch.Tensor] = None
     scales: Optional[torch.Tensor] = None
     alphas: Optional[torch.Tensor] = None
+    version: Optional[int] = None
 
     def detach(self):
         return SplatSnapshot(
@@ -21,4 +22,5 @@ class SplatSnapshot:
             quats=self.quats.detach(),
             scales=self.scales.detach(),
             alphas=self.alphas.detach(),
+            version=self.version,
         )
