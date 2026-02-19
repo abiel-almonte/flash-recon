@@ -27,8 +27,9 @@ class Splat:
 
     @property
     def snapshot(self):
-        snapshot = self.buffer.snapshot
-        return snapshot.detach()
+        snapshot = self.buffer.snapshot.detach()
+        snapshot.version = self._step_count
+        return snapshot
 
     def _deform(self, snapshot: SLAMSnapshot):
         n_kf = min(snapshot.n_keyframes, len(self.buffer))
