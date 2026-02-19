@@ -1,7 +1,9 @@
+import os
 from setuptools import setup, find_packages
 from torch.utils.cpp_extension import CUDAExtension, BuildExtension
 
-common_includes = ["csrc", "csrc/common"]
+ROOT = os.path.dirname(os.path.abspath(__file__))
+common_includes = [os.path.join(ROOT, "csrc"), os.path.join(ROOT, "csrc/common")]
 
 
 def create_module(name):
@@ -11,7 +13,7 @@ def create_module(name):
             f"csrc/{name}/bindings.cpp",
             f"csrc/{name}/kernels.cu",
         ],
-        include_dirs=[f"csrc/{name}", *common_includes],
+        include_dirs=[os.path.join(ROOT, f"csrc/{name}"), *common_includes],
         extra_compile_args={
             "cxx": ["-O3", "-std=c++17"],
             "nvcc": ["-O3", "--use_fast_math", "-lineinfo"],

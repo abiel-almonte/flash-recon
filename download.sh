@@ -17,3 +17,8 @@ wget https://cvg.cit.tum.de/rgbd/dataset/freiburg1/rgbd_dataset_freiburg1_room.t
 tar -xvzf rgbd_dataset_freiburg1_room.tgz -C datasets/
 mv /workspace/datasets/rgbd_dataset_freiburg1_room /workspace/datasets/room
 rm rgbd_dataset_freiburg1_room.tgz
+
+wget https://cvg.cit.tum.de/rgbd/dataset/freiburg1/rgbd_dataset_freiburg1_360.tgz
+tar -xvzf rgbd_dataset_freiburg1_360.tgz -C datasets/
+mv /workspace/datasets/rgbd_dataset_freiburg1_360 /workspace/datasets/360
+rm rgbd_dataset_freiburg1_360.tgz

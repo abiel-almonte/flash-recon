@@ -10,9 +10,11 @@ from .lie import (
     pose_retraction,
     pose_to_matrix,
     matrix_to_pose,
+    quat_multiply_cuda,
+    quat_to_matrix_cuda,
 )
 
-from .utils import get_meshgrid
+from .utils import get_meshgrid, iproj
 
 __all__ = [
     "Pose",
@@ -32,6 +34,9 @@ __all__ = [
     "pose_retraction",
     "pose_to_matrix",
     "matrix_to_pose",
+    "quat_multiply_cuda",
+    "quat_to_matrix_cuda",
     "compute_distance",
     "get_meshgrid",
+    "iproj",
 ]

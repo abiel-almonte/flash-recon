@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 import torch.nn.functional as F
 
@@ -10,7 +12,7 @@ from geometry import (
     depth_filter,
 )
 
-from .contexts import BAContext, BufferSnapshot
+from .contexts import BAContext, BufferSnapshot, KeyFrame
 from .enums import BAType
 
 
@@ -59,11 +61,28 @@ class KeyFrameBuffer:
             self.capacity, device=self.device, dtype=torch.bool
         )
         self._count = 0
+        self._version = 0
 
         # Feature attrs
         self.fmaps = torch.zeros(self.capacity, 1, 128, ht, wd, device=self.device)
         self.nets = torch.zeros(self.capacity, 128, ht, wd, device=self.device)
         self.inps = torch.zeros(self.capacity, 128, ht, wd, device=self.device)
+
+    @property
+    def version(self):
+        return self._version
+
+    def get_keyframe(self, idx: int) -> KeyFrame:
+        if not (0 <= idx < self._count):
+            raise IndexError(
+                f"Keyframe index {idx} out of range (n_keyframes={self._count})"
+            )
+
+        return KeyFrame(
+            poses=self._poses[idx],
+            disps=self._disps_up[idx],
+            vmask=self._valid_depth_mask[idx],
+        )
 
     def get_scale_shift(self, index):
         return self._scales[index], self._shifts[index]
@@ -74,8 +93,11 @@ class KeyFrameBuffer:
     def get_depth(self, index):
         return 1.0 / (self._disps[index].clamp_min(1e-7))
 
-    def get_vmask(self, index):
-        return self._valid_depth_mask[index]
+    def get_vmask(self, index: Optional[int] = None):
+        if index is not None:
+            return self._valid_depth_mask[index]
+        else:
+            return self._valid_depth_mask
 
     def get_cam2world(self, index):
         w2c = self._poses[index]
@@ -226,21 +248,15 @@ class KeyFrameBuffer:
             self._valid_depth_mask_small[update_indices] = masks
 
     def upsample_disps(self, source_indices, upmask):
-        disps = self._disps[source_indices].unsqueeze(-1)
-        edges, ht, wd, dim = disps.shape
+        disps = self._disps[source_indices]
 
-        disps = disps.permute(0, 3, 1, 2).contiguous()
-        mask = upmask.view(edges, 1, 9, 8, 8, ht, wd)
-        mask = torch.softmax(mask, dim=2)
+        self._disps_up[source_indices] = F.interpolate(
+            disps.unsqueeze(1),
+            scale_factor=self.down_scale,
+            mode="bilinear",
+            align_corners=False,
+        ).squeeze(1)
 
-        up_disps = F.unfold(disps, kernel_size=(3, 3), padding=(1, 1))
-        up_disps = up_disps.view(edges, dim, 9, 1, 1, ht, wd)
-
-        up_disps = torch.sum(mask * up_disps, dim=2, keepdim=False)
-        up_disps = up_disps.permute(0, 4, 2, 5, 3, 1).contiguous()
-        up_disps = up_disps.reshape(edges, 8 * ht, 8 * wd, dim).squeeze(-1)
-
-        self._disps_up[source_indices] = up_disps
         self.set_needs_update(source_indices)
 
     def normalize(self):
@@ -248,8 +264,9 @@ class KeyFrameBuffer:
         t = self._poses.t[: self._count]
 
         mean = disps.mean().clamp_min(1e-5)
-        disps.div_(mean)
-        t.mul_(mean)
+
+        self._disps[: self._count] = disps.div(mean)
+        self._poses.t[: self._count] = t.mul(mean)
 
         self.set_needs_update(slice(0, self._count))
 
@@ -319,28 +336,6 @@ class KeyFrameBuffer:
 
         return None
 
-    def filter_mono_edges(self, invalid_mono_frames, ii, jj, target, weight, eta):
-        if invalid_mono_frames is None:
-            return ii, jj, target, weight, eta
-
-        invalid_idx = torch.where(invalid_mono_frames)[0]
-        if invalid_idx.numel() == 0:
-            return ii, jj, target, weight, eta
-
-        mask = torch.zeros(ii.shape[0], dtype=torch.bool, device=ii.device)
-        for idx in invalid_idx:
-            mask = mask | (ii == idx) | (jj == idx)
-
-        keep = ~mask
-        ii_f, jj_f = ii[keep], jj[keep]
-
-        # eta is indexed by unique(ii), so filter to match
-        orig_unique = torch.unique(ii)
-        new_unique = torch.unique(ii_f)
-        valid = torch.tensor([u in new_unique for u in orig_unique]).to(ii.device)
-
-        return ii_f, jj_f, target[keep], weight[keep], eta[valid]
-
     def apply_ba_result(self, ctx: BAContext):
         T = self._count
 
@@ -354,6 +349,7 @@ class KeyFrameBuffer:
             self._shifts[:T] = ctx.shifts
 
         self.set_needs_update(slice(0, T))
+        self._version += 1
 
     @property
     def snapshot(self):

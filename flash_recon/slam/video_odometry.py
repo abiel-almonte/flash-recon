@@ -227,7 +227,7 @@ class VideoOdometry:
             return ctx, params
         else:
             ctx = buffer.create_ba_context(BAType.DEPTH_SCALE)
-            ii_f, jj_f, tgt_f, wt_f, eta_f = buffer.filter_mono_edges(
+            ii_f, jj_f, tgt_f, wt_f, eta_f = self._filter_mono_edges(
                 ctx.invalid_mono_frames, ii, jj, target, weight, eta
             )
             if ii_f.shape[0] == 0:
@@ -245,6 +245,28 @@ class VideoOdometry:
                 "alpha": 0.01,
             }
             return ctx, params
+
+    def _filter_mono_edges(self, invalid_mono_frames, ii, jj, target, weight, eta):
+        if invalid_mono_frames is None:
+            return ii, jj, target, weight, eta
+
+        invalid_idx = torch.where(invalid_mono_frames)[0]
+        if invalid_idx.numel() == 0:
+            return ii, jj, target, weight, eta
+
+        mask = torch.zeros(ii.shape[0], dtype=torch.bool, device=ii.device)
+        for idx in invalid_idx:
+            mask = mask | (ii == idx) | (jj == idx)
+
+        keep = ~mask
+        ii_f, jj_f = ii[keep], jj[keep]
+
+        # eta is indexed by unique(ii), so filter to match
+        orig_unique = torch.unique(ii)
+        new_unique = torch.unique(ii_f)
+        valid = torch.tensor([u in new_unique for u in orig_unique]).to(ii.device)
+
+        return ii_f, jj_f, target[keep], weight[keep], eta[valid]
 
     def __call__(
         self,
