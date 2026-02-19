@@ -30,7 +30,6 @@ class BAContext:
     invalid_mono_frames: Optional[object] = None
 
     # Optimization parameters
-    type: str = "poses_depths"
     iters: int = 1
     ignore_frames: int = 1
     num_fixed_poses: int = 1
