@@ -155,10 +155,9 @@ class KeyFrameBuffer:
         idx = self._count
         if idx > 0 and idx < self.capacity:
             self._poses[idx] = self._poses[idx - 1]
-            if use_init_mean:
-                self._disps[idx] = self._disps[max(0, idx - 4) : idx].mean()
-            else:
-                self._disps[idx] = self._disps[idx - 1].mean()
+            lo = max(0, idx - 3)
+            hi = max(1, idx - 1)
+            self._disps[idx] = torch.quantile(self._disps[lo:hi], 0.5)
 
     def remove(self, idx: int) -> None:
         if idx < 0 or idx >= self._count:
