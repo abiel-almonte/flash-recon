@@ -388,6 +388,84 @@ def assemble_full_sys(
     return hessian, gradient, cross_term, depth_diag, depth_gradient
 
 
+def assemble_full_sys_lowmem(
+    poses: Pose,
+    disps: torch.Tensor,
+    intr: Intrinsics,
+    source_indices: torch.Tensor,
+    target_indices: torch.Tensor,
+    target: torch.Tensor,
+    weight: torch.Tensor,
+    edge_to_keyframe: torch.Tensor,  # [E]
+    keyframe_indices: torch.Tensor,  # [M]
+    damping: torch.Tensor,  # [M, ht, wd] - damping for M source keyframes
+    rig_size: int,
+    num_fixed_poses: int,
+    n_poses: int,
+    ht: int,
+    wd: int,
+    ep: float = 0.1,
+    lm: float = 0.0001,
+):
+    """Assemble linear system for full BA without materializing cross_term.
+
+    Like assemble_full_sys but skips the [P, M, 6, hw] cross_term allocation.
+    Returns per-edge Ei/Ej instead for use with schur_solve_lowmem.
+
+    Returns:
+        hessian: [P, P, 6, 6]
+        gradient: [P, 6]
+        Ei: [E, 6, hw] - per-edge depth Jacobian (source)
+        Ej: [E, 6, hw] - per-edge depth Jacobian (target)
+        depth_diag: [M, hw]
+        depth_gradient: [M, hw]
+    """
+
+    num_opt_poses = n_poses // rig_size - num_fixed_poses
+    M = keyframe_indices.shape[0]
+
+    Hii, Hij, Hji, Hjj, vi, vj, Ei, Ej, Ck, wk = fused_project_and_accumulate(
+        poses,
+        disps,
+        intr,
+        source_indices,
+        target_indices,
+        target,
+        weight,
+        ret_cross12=True,
+    )
+
+    hessian, gradient, depth_diag, depth_gradient = scatter_pose_system(
+        Hii,
+        Hij,
+        Hji,
+        Hjj,
+        vi,
+        vj,
+        source_indices,
+        target_indices,
+        num_opt_poses,
+        rig_size,
+        num_fixed_poses,
+        Ei=Ei,
+        Ej=Ej,
+        Ck=Ck,
+        wk=wk,
+        ret_cross=False,
+        ret_depth=True,
+        edge_to_keyframe=edge_to_keyframe,
+        keyframe_indices=keyframe_indices,
+        damping=damping,
+        M=M,
+        ht=ht,
+        wd=wd,
+        ep=ep,
+        lm=lm,
+    )
+
+    return hessian, gradient, Ei, Ej, depth_diag, depth_gradient
+
+
 def schur_solve(
     hessian: torch.Tensor,
     cross_term: torch.Tensor,
@@ -453,6 +531,132 @@ def schur_solve(
     dz = inv_depth_diag * (depth_gradient - cross_termT @ dx)  # [M*hw, 1]
     dx = dx.reshape(P, d)
     dz = dz.reshape(M, hw)
+
+    return dx, dz
+
+
+@torch.autocast("cuda", enabled=False)
+def schur_solve_lowmem(
+    hessian: torch.Tensor,
+    gradient: torch.Tensor,
+    Ei: torch.Tensor,
+    Ej: torch.Tensor,
+    depth_diag: torch.Tensor,
+    depth_gradient: torch.Tensor,
+    source_indices: torch.Tensor,
+    target_indices: torch.Tensor,
+    edge_to_keyframe: torch.Tensor,
+    num_opt_poses: int,
+    num_fixed_poses: int,
+    rig_size: int,
+    M: int,
+    ep: float = 0.1,
+    lm: float = 0.0001,
+):
+    """Schur solve without materializing dense [P, M, 6, hw] cross_term.
+
+    Computes the Schur complement per depth frame from per-edge Ei/Ej,
+    matching DROID-SLAM's sparse approach. Peak memory is O(P*d*hw) per
+    depth frame instead of O(P*M*d*hw) for the full cross_term.
+    """
+    P = num_opt_poses
+    d = 6
+    hw = Ei.shape[2]
+    device = hessian.device
+    dtype = hessian.dtype
+
+    # Ensure Ei/Ej match working dtype (may be float16 under autocast)
+    Ei = Ei.to(dtype)
+    Ej = Ej.to(dtype)
+
+    # Flatten pose Hessian: [P, P, 6, 6] -> [P*d, P*d]
+    H = hessian.permute(0, 2, 1, 3).reshape(P * d, P * d)
+
+    # Apply Levenberg-Marquardt damping
+    if ep > 0 or lm > 0:
+        diag_hess = torch.diagonal(H)
+        H = H + torch.diag(ep + lm * diag_hess)
+
+    # Map edge frame indices to pose optimization indices
+    ii_pose = source_indices // rig_size - num_fixed_poses
+    jj_pose = target_indices // rig_size - num_fixed_poses
+
+    # Inverse depth diagonal
+    Q = 1.0 / depth_diag  # [M, hw]
+
+    # Accumulate Schur complement per depth frame
+    S = torch.zeros(P * d, P * d, device=device, dtype=dtype)
+    schur_grad = torch.zeros(P * d, 1, device=device, dtype=dtype)
+
+    for m in range(M):
+        mask = edge_to_keyframe == m
+        if not mask.any():
+            continue
+
+        # Per-edge E for this depth frame
+        Ei_m = Ei[mask]  # [n_m, 6, hw]
+        Ej_m = Ej[mask]  # [n_m, 6, hw]
+        ii_m = ii_pose[mask]  # [n_m]
+        jj_m = jj_pose[mask]  # [n_m]
+
+        # Accumulate into [P, 6, hw] via scatter_add
+        E_m = torch.zeros(P, d, hw, device=device, dtype=dtype)
+
+        src_valid = (ii_m >= 0) & (ii_m < P)
+        if src_valid.any():
+            idx = ii_m[src_valid].unsqueeze(-1).unsqueeze(-1).expand_as(Ei_m[src_valid])
+            E_m.scatter_add_(0, idx, Ei_m[src_valid])
+
+        tgt_valid = (jj_m >= 0) & (jj_m < P)
+        if tgt_valid.any():
+            idx = jj_m[tgt_valid].unsqueeze(-1).unsqueeze(-1).expand_as(Ej_m[tgt_valid])
+            E_m.scatter_add_(0, idx, Ej_m[tgt_valid])
+
+        Q_m = Q[m]  # [hw]
+        w_m = depth_gradient[m]  # [hw]
+
+        # S += E_m * diag(Q_m) * E_m^T
+        E_flat = E_m.reshape(P * d, hw)  # [P*d, hw]
+        E_scaled = E_flat * Q_m.unsqueeze(0)  # [P*d, hw]
+        S.addmm_(E_scaled, E_flat.T)  # [P*d, P*d]
+
+        # grad correction += E_m * Q_m * w_m
+        schur_grad.addmm_(E_scaled, w_m.unsqueeze(1))  # [P*d, 1]
+
+    # Reduced system
+    schur_H = H - S
+    grad_flat = gradient.reshape(P * d, 1)
+    schur_g = grad_flat - schur_grad
+
+    # Solve for pose update
+    try:
+        U = torch.linalg.cholesky(schur_H)
+        dx = torch.cholesky_solve(schur_g, U)  # [P*d, 1]
+    except RuntimeError:
+        dx = torch.zeros(P, d, device=device, dtype=dtype)
+        dz = torch.zeros(M, hw, device=device, dtype=dtype)
+        return dx, dz
+
+    # Back-solve for depth: dz = Q * (w - E^T @ dx)
+    # Gather dx per edge, compute E^T @ dx, scatter to depth frames
+    dx_padded = torch.zeros(max(P, 1), d, 1, device=device, dtype=dtype)
+    dx_padded[:P] = dx.reshape(P, d, 1)
+
+    dx_ii = dx_padded[ii_pose.clamp(0, P - 1)]  # [E, 6, 1]
+    dx_ii[(ii_pose < 0) | (ii_pose >= P)] = 0
+    dx_jj = dx_padded[jj_pose.clamp(0, P - 1)]  # [E, 6, 1]
+    dx_jj[(jj_pose < 0) | (jj_pose >= P)] = 0
+
+    # Ei^T @ dx_ii: [E, hw, 6] @ [E, 6, 1] -> [E, hw]
+    Et_dx = torch.bmm(Ei.transpose(1, 2), dx_ii).squeeze(-1) + torch.bmm(
+        Ej.transpose(1, 2), dx_jj
+    ).squeeze(-1)
+
+    correction = torch.zeros(M, hw, device=device, dtype=dtype)
+    correction.scatter_add_(0, edge_to_keyframe.unsqueeze(-1).expand_as(Et_dx), Et_dx)
+
+    dz = Q * (depth_gradient - correction)  # [M, hw]
+    dx = dx.reshape(P, d)
 
     return dx, dz
 
