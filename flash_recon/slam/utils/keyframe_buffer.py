@@ -60,6 +60,7 @@ class KeyFrameBuffer:
         self.needs_update = torch.zeros(
             self.capacity, device=self.device, dtype=torch.bool
         )
+        self._tstamps = torch.zeros(self.capacity, dtype=torch.float64, device="cpu")
         self._count = 0
         self._version = 0
 
@@ -116,6 +117,14 @@ class KeyFrameBuffer:
     def set_needs_update(self, indices: torch.Tensor):
         self.needs_update[indices] = True
 
+    def get_tstamp(self, idx: int) -> float:
+        return self._tstamps[idx].item()
+
+    def get_tstamps(self, count: int = None):
+        if count is None:
+            count = self._count
+        return self._tstamps[:count]
+
     def append(
         self,
         pose: Pose = None,
@@ -124,12 +133,14 @@ class KeyFrameBuffer:
         fmap: torch.Tensor = None,
         net: torch.Tensor = None,
         inp: torch.Tensor = None,
+        tstamp: float = 0.0,
     ) -> None:
 
         idx = self._count
         if idx >= self.capacity:
             raise RuntimeError("KeyFrameBuffer capacity exceeded")
 
+        self._tstamps[idx] = tstamp
         if pose is not None:
             self._poses[idx] = pose
         if disp is not None:
