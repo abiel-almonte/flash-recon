@@ -4,9 +4,11 @@ from .structs import Pose, Tangent, Intrinsics
 from .utils import (
     assemble_scale_shift_sys,
     assemble_full_sys,
+    assemble_full_sys_lowmem,
     assemble_motion_only_sys,
     block_solve,
     schur_solve,
+    schur_solve_lowmem,
 )
 
 from .lie import pose_retraction
@@ -154,6 +156,7 @@ def full_ba(
     alpha: float = 0.05,  # weight for depth regularization (unused in current impl)
     num_fixed_poses: int = 1,  # number of fixed poses at the start
     rig_size: int = 1,  # rig size for multi-camera systems
+    lowmem: bool = False,  # use lowmem Schur solver (avoids [P,M,6,hw] cross_term)
 ):
     """Full bundle adjustment.
 
@@ -188,41 +191,73 @@ def full_ba(
     keyframe_indices, edge_to_keyframe = torch.unique(ii_window, return_inverse=True)
 
     damping_keyframes = eta
+    num_opt_poses = n_poses // rig_size - num_fixed_poses
+    M = keyframe_indices.shape[0]
 
-    # ========== PROJECTIVE JACOBIANS & LINEAR SYSTEM CONSTRUCTION ==========
+    if lowmem:
+        hessian, gradient, Ei, Ej, depth_diag, depth_gradient = (
+            assemble_full_sys_lowmem(
+                poses=poses_window,
+                disps=disps_window,
+                intr=intrinsics,
+                source_indices=ii_window,
+                target_indices=jj_window,
+                target=target_window,
+                weight=weight_window,
+                edge_to_keyframe=edge_to_keyframe,
+                keyframe_indices=keyframe_indices,
+                damping=damping_keyframes,
+                rig_size=rig_size,
+                num_fixed_poses=num_fixed_poses,
+                n_poses=n_poses,
+                ht=ht,
+                wd=wd,
+                ep=0,
+                lm=0,
+            )
+        )
 
-    hessian, gradient, cross_term, depth_diag, depth_gradient = assemble_full_sys(
-        poses_window,
-        disps_window,
-        intrinsics,
-        ii_window,
-        jj_window,
-        target_window,
-        weight_window,
-        edge_to_keyframe,
-        keyframe_indices,
-        damping_keyframes,
-        rig_size,
-        num_fixed_poses,
-        n_poses,
-        ht,
-        wd,
-        ep=0,  # Don't apply damping in CUDA - let schur_solve handle it
-        lm=0,
-    )
+        pose_update, depth_update = schur_solve_lowmem(
+            hessian,
+            gradient,
+            Ei,
+            Ej,
+            depth_diag,
+            depth_gradient,
+            ii_window,
+            jj_window,
+            edge_to_keyframe,
+            num_opt_poses,
+            num_fixed_poses,
+            rig_size,
+            M,
+            ep,
+            lm,
+        )
+    else:
+        hessian, gradient, cross_term, depth_diag, depth_gradient = assemble_full_sys(
+            poses=poses_window,
+            disps=disps_window,
+            intr=intrinsics,
+            source_indices=ii_window,
+            target_indices=jj_window,
+            target=target_window,
+            weight=weight_window,
+            edge_to_keyframe=edge_to_keyframe,
+            keyframe_indices=keyframe_indices,
+            damping=damping_keyframes,
+            rig_size=rig_size,
+            num_fixed_poses=num_fixed_poses,
+            n_poses=n_poses,
+            ht=ht,
+            wd=wd,
+            ep=0,
+            lm=0,
+        )
 
-    # hessian [P, P, 6, 6]
-    # gradient [P, 6]
-    # cross_term [P, M, 6, ht*wd]
-    # depth_diag [M, ht*wd]
-    # depth_gradient [M, ht*wd]
-
-    # ========== SOLVE LINEAR SYSTEM ==========
-    pose_update, depth_update = schur_solve(
-        hessian, cross_term, depth_diag, gradient, depth_gradient, ep, lm
-    )
-    # pose_update [P, 6]
-    # depth_update [M, ht*wd]
+        pose_update, depth_update = schur_solve(
+            hessian, cross_term, depth_diag, gradient, depth_gradient, ep, lm
+        )
 
     # ========== APPLY UPDATES ==========
     window_update = torch.zeros(

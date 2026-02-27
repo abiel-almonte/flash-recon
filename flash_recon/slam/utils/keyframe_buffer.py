@@ -60,6 +60,7 @@ class KeyFrameBuffer:
         self.needs_update = torch.zeros(
             self.capacity, device=self.device, dtype=torch.bool
         )
+        self._tstamps = torch.zeros(self.capacity, dtype=torch.float64, device="cpu")
         self._count = 0
         self._version = 0
 
@@ -116,6 +117,14 @@ class KeyFrameBuffer:
     def set_needs_update(self, indices: torch.Tensor):
         self.needs_update[indices] = True
 
+    def get_tstamp(self, idx: int) -> float:
+        return self._tstamps[idx].item()
+
+    def get_tstamps(self, count: int = None):
+        if count is None:
+            count = self._count
+        return self._tstamps[:count]
+
     def append(
         self,
         pose: Pose = None,
@@ -124,12 +133,14 @@ class KeyFrameBuffer:
         fmap: torch.Tensor = None,
         net: torch.Tensor = None,
         inp: torch.Tensor = None,
+        tstamp: float = 0.0,
     ) -> None:
 
         idx = self._count
         if idx >= self.capacity:
             raise RuntimeError("KeyFrameBuffer capacity exceeded")
 
+        self._tstamps[idx] = tstamp
         if pose is not None:
             self._poses[idx] = pose
         if disp is not None:
@@ -155,10 +166,9 @@ class KeyFrameBuffer:
         idx = self._count
         if idx > 0 and idx < self.capacity:
             self._poses[idx] = self._poses[idx - 1]
-            if use_init_mean:
-                self._disps[idx] = self._disps[max(0, idx - 4) : idx].mean()
-            else:
-                self._disps[idx] = self._disps[idx - 1].mean()
+            lo = max(0, idx - 3)
+            hi = max(1, idx - 1)
+            self._disps[idx] = torch.quantile(self._disps[lo:hi], 0.5)
 
     def remove(self, idx: int) -> None:
         if idx < 0 or idx >= self._count:
@@ -168,18 +178,21 @@ class KeyFrameBuffer:
             src = slice(idx + 1, self._count)
             dst = slice(idx, self._count - 1)
 
-            self._poses[dst] = self._poses[src]
-            self._disps[dst] = self._disps[src]
-            self._disps_up[dst] = self._disps_up[src]
-            self._mono_depths[dst] = self._mono_depths[src]
-            self._scales[dst] = self._scales[src]
-            self._shifts[dst] = self._shifts[src]
-            self._valid_depth_mask[dst] = self._valid_depth_mask[src]
-            self._valid_depth_mask_small[dst] = self._valid_depth_mask_small[src]
-            self.needs_update[dst] = self.needs_update[src]
-            self.fmaps[dst] = self.fmaps[src]
-            self.nets[dst] = self.nets[src]
-            self.inps[dst] = self.inps[src]
+            self._poses[dst] = self._poses[src].clone()
+            self._disps[dst] = self._disps[src].clone()
+            self._disps_up[dst] = self._disps_up[src].clone()
+            self._mono_depths[dst] = self._mono_depths[src].clone()
+            self._scales[dst] = self._scales[src].clone()
+            self._shifts[dst] = self._shifts[src].clone()
+            self._valid_depth_mask[dst] = self._valid_depth_mask[src].clone()
+            self._valid_depth_mask_small[dst] = self._valid_depth_mask_small[
+                src
+            ].clone()
+            self.needs_update[dst] = self.needs_update[src].clone()
+            self._tstamps[dst] = self._tstamps[src].clone()
+            self.fmaps[dst] = self.fmaps[src].clone()
+            self.nets[dst] = self.nets[src].clone()
+            self.inps[dst] = self.inps[src].clone()
 
         self._count -= 1
 

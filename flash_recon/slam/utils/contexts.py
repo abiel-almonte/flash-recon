@@ -41,6 +41,7 @@ class BAContext:
     lm: Optional[float] = None
     ep: Optional[float] = None
     alpha: Optional[float] = None
+    lowmem: bool = False
 
 
 @dataclass

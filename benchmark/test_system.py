@@ -21,10 +21,10 @@ FY = FY_NATIVE * H_OUT / H_CROP
 CX = (CX_NATIVE - W_EDGE) * W_OUT / W_CROP
 CY = (CY_NATIVE - H_EDGE) * H_OUT / H_CROP
 
-DATASET_ROOT = os.environ.get("DATASET_ROOT", "/workspace/datasets/desk")
-WEIGHTS_PATH = os.environ.get("DROID_WEIGHTS", "/workspace/neural/weights/droid.pth")
+DATASET_ROOT = os.environ.get("DATASET_ROOT", "datasets/TUM/fr1_desk")
+WEIGHTS_PATH = os.environ.get("DROID_WEIGHTS", "neural/weights/droid.pth")
 DEPTH_WEIGHTS = os.environ.get(
-    "DEPTH_WEIGHTS", "/workspace/neural/weights/depth_anything_v2_vits.pth"
+    "DEPTH_WEIGHTS", "neural/weights/depth_anything_v2_vits.pth"
 )
 
 MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
@@ -71,6 +71,7 @@ cfg = {
             "radius": 1,
             "nms": 5,
             "normalize": False,
+            "enabled": False,
         },
         "motion_filter": {
             "thresh": 4,

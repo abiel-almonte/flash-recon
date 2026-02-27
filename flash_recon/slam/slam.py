@@ -33,19 +33,21 @@ class SLAM:
         self.local_nms = int(fc["nms"])
 
         # loop closure
-        lc = cfg["tracking"]["loop_closure"]
-        self.loop_window = int(lc["window"])
-        self.loop_thresh = float(lc["thresh"])
-        self.loop_radius = int(lc["radius"])
-        self.loop_nms = int(lc["nms"])
+        lc = cfg["tracking"].get("loop_closure", {})
+        self.enable_loop = bool(fc.get("enable_loop", False))
+        self.loop_window = int(lc.get("window", 25))
+        self.loop_thresh = float(lc.get("thresh", 24.0))
+        self.loop_radius = int(lc.get("radius", 2))
+        self.loop_nms = int(lc.get("nms", 2))
 
-        # global
-        bc = cfg["tracking"]["global"]
-        self.global_freq = int(bc["freq"])
-        self.global_thresh = float(bc["thresh"])
-        self.global_radius = int(bc["radius"])
-        self.global_nms = int(bc["nms"])
-        self.global_normalize_enabled = bool(bc["normalize"])
+        # periodic global BA
+        bc = cfg["tracking"].get("global", {})
+        self.enable_global = bool(bc.get("enabled", False))
+        self.global_freq = int(bc.get("freq", 20))
+        self.global_thresh = float(bc.get("thresh", 24.0))
+        self.global_radius = int(bc.get("radius", 2))
+        self.global_nms = int(bc.get("nms", 2))
+        self.global_normalize_enabled = bool(bc.get("normalize", False))
 
         self.motion_thresh = float(cfg["tracking"]["motion_filter"]["thresh"])
 
@@ -77,17 +79,22 @@ class SLAM:
         idx = len(self.buffer) - 1
         return self.buffer.get_keyframe(idx)
 
-    def _try_add_keyframe(self, frame, mono_depth) -> bool:
+    def _try_add_keyframe(self, frame, mono_depth=None, tstamp=0.0) -> bool:
         fmap, net, inp = self.vo.extract(frame)
         if len(self.buffer) == 0:
             self.prev_fmap, self.prev_net, self.prev_inp = fmap, net, inp
+
+            net_buf = net[0, 0].expand_as(net).contiguous()
+            inp_buf = inp[0, 0].expand_as(inp).contiguous()
+
             self.buffer.append(
                 pose=identity_pose(1),
                 disp=1.0,
                 mono_depth=mono_depth,
                 fmap=fmap,
-                net=net,
-                inp=inp,
+                net=net_buf,
+                inp=inp_buf,
+                tstamp=tstamp,
             )
             return True
 
@@ -98,20 +105,25 @@ class SLAM:
             return False
 
         self.prev_fmap, self.prev_net, self.prev_inp = fmap, net, inp
-        self.buffer.append(mono_depth=mono_depth, fmap=fmap, net=net, inp=inp)
+        self.buffer.append(
+            mono_depth=mono_depth, fmap=fmap, net=net, inp=inp, tstamp=tstamp
+        )
         return True
 
     def _try_reject_keyframe(self) -> bool:
         count = len(self.buffer)
+        if count < 5:
+            return False
+
         poses, disps, intrinsics = self.buffer.get_geometric_attrs()
-        ii = torch.tensor([count - 2], device=self.device)
-        jj = torch.tensor([count - 1], device=self.device)
+        ii = torch.tensor([count - 4], device=self.device)
+        jj = torch.tensor([count - 2], device=self.device)
         dist = compute_distance(
             poses, disps, intrinsics, ii=ii, jj=jj, beta=self.beta, bidirectional=True
         )
-        if dist.item() < self.keyframe_thresh:
-            self.graph.remove_keyframe(count - 1)
-            self.buffer.remove(count - 1)
+        if dist.item() < 2.0 * self.keyframe_thresh:
+            self.graph.remove_keyframe(count - 3, count)
+            self.buffer.remove(count - 3)
             return True
         return False
 
@@ -151,7 +163,7 @@ class SLAM:
             self.buffer.normalize()
 
         t_end = len(self.buffer)
-        max_factors = ((self.global_radius + 2) * 2) * (t_end)
+        max_factors = 16 * t_end
 
         global_graph = GlobalGraph.from_local(self.graph)
         global_graph.max_factors = max_factors
@@ -202,8 +214,8 @@ class SLAM:
 
     def _track(self) -> None:
         count = len(self.buffer)
-        # evict old edges
-        if self.graph.corr_initialized():
+
+        if self.graph.has_edges():
             self.graph.remove(self.graph.age > self.max_age, store=True)
 
         # add local_edegs
@@ -221,35 +233,50 @@ class SLAM:
         )
 
         # local update
-        self.vo(buffer=self.buffer, graph=self.graph, steps=8, alternate=True)
+        self.vo(buffer=self.buffer, graph=self.graph, steps=3, alternate=False)
 
-        # reject or loop-close
         if not self._try_reject_keyframe():
-            loop_graph, t0 = self._create_loop_graph()
-
-            if loop_graph is not None:
-                self.vo(
-                    buffer=self.buffer, graph=loop_graph, t0=t0, steps=4, alternate=True
-                )
-                del loop_graph
+            if self.enable_loop:
+                loop_graph, t0 = self._create_loop_graph()
+                if loop_graph is not None:
+                    self.vo(
+                        buffer=self.buffer,
+                        graph=loop_graph,
+                        t0=t0,
+                        steps=4,
+                        alternate=True,
+                    )
+                    del loop_graph
+                else:
+                    self.vo(
+                        buffer=self.buffer, graph=self.graph, steps=2, alternate=True
+                    )
             else:
-                self.vo(buffer=self.buffer, graph=self.graph, steps=4, alternate=True)
+                self.vo(buffer=self.buffer, graph=self.graph, steps=2, alternate=False)
 
-        self.buffer.set_needs_update(
-            torch.arange(int(self.graph.ii.min()), count, device=self.device)
-        )
+        count = len(self.buffer)
+        if self.graph.ii.numel() > 0:
+            t_min = int(self.graph.ii.min())
+        else:
+            t_min = max(count - 1, 0)
+        self.buffer.set_needs_update(torch.arange(t_min, count, device=self.device))
         self.buffer.update_vmask(up=True)
         self.buffer.propagate(use_init_mean=False)
 
-        if len(self.buffer) % self.global_freq == 0:
+        if self.enable_global and count % self.global_freq == 0:
             global_graph, t0 = self._create_global_graph()
-
             if global_graph is not None:
-                self.vo(buffer=self.buffer, graph=self.graph, steps=2, alternate=True)
+                self.vo(
+                    buffer=self.buffer,
+                    graph=global_graph,
+                    t0=t0,
+                    steps=2,
+                    alternate=True,
+                )
                 del global_graph
 
-    def __call__(self, frame, mono_depth) -> None:
-        if not self._try_add_keyframe(frame, mono_depth):
+    def __call__(self, frame, mono_depth=None, tstamp=0.0) -> None:
+        if not self._try_add_keyframe(frame, mono_depth, tstamp=tstamp):
             return
 
         count = len(self.buffer)
@@ -261,6 +288,23 @@ class SLAM:
             return
 
         self._track()
+
+    def finalize(self, steps_per_pass=(7, 12)):
+        for steps in steps_per_pass:
+            torch.cuda.empty_cache()
+
+            global_graph, t0 = self._create_global_graph()
+            if global_graph is None:
+                break
+
+            self.vo(
+                buffer=self.buffer,
+                graph=global_graph,
+                t0=t0,
+                steps=steps,
+                alternate=False,
+            )
+            del global_graph
 
     def __len__(self) -> int:
         return len(self.graph)
