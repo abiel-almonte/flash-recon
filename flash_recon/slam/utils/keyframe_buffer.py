@@ -167,18 +167,21 @@ class KeyFrameBuffer:
             src = slice(idx + 1, self._count)
             dst = slice(idx, self._count - 1)
 
-            self._poses[dst] = self._poses[src]
-            self._disps[dst] = self._disps[src]
-            self._disps_up[dst] = self._disps_up[src]
-            self._mono_depths[dst] = self._mono_depths[src]
-            self._scales[dst] = self._scales[src]
-            self._shifts[dst] = self._shifts[src]
-            self._valid_depth_mask[dst] = self._valid_depth_mask[src]
-            self._valid_depth_mask_small[dst] = self._valid_depth_mask_small[src]
-            self.needs_update[dst] = self.needs_update[src]
-            self.fmaps[dst] = self.fmaps[src]
-            self.nets[dst] = self.nets[src]
-            self.inps[dst] = self.inps[src]
+            self._poses[dst] = self._poses[src].clone()
+            self._disps[dst] = self._disps[src].clone()
+            self._disps_up[dst] = self._disps_up[src].clone()
+            self._mono_depths[dst] = self._mono_depths[src].clone()
+            self._scales[dst] = self._scales[src].clone()
+            self._shifts[dst] = self._shifts[src].clone()
+            self._valid_depth_mask[dst] = self._valid_depth_mask[src].clone()
+            self._valid_depth_mask_small[dst] = self._valid_depth_mask_small[
+                src
+            ].clone()
+            self.needs_update[dst] = self.needs_update[src].clone()
+            self._tstamps[dst] = self._tstamps[src].clone()
+            self.fmaps[dst] = self.fmaps[src].clone()
+            self.nets[dst] = self.nets[src].clone()
+            self.inps[dst] = self.inps[src].clone()
 
         self._count -= 1
 
