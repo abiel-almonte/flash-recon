@@ -31,10 +31,10 @@ FY = FY_NATIVE * H_OUT / H_CROP
 CX = (CX_NATIVE - W_EDGE) * W_OUT / W_CROP
 CY = (CY_NATIVE - H_EDGE) * H_OUT / H_CROP
 
-DATASET_ROOT = os.environ.get("DATASET_ROOT", "/workspace/datasets/desk")
-WEIGHTS_PATH = os.environ.get("DROID_WEIGHTS", "/workspace/neural/weights/droid.pth")
+DATASET_ROOT = os.environ.get("DATASET_ROOT", "datasets/TUM/fr1_desk")
+WEIGHTS_PATH = os.environ.get("DROID_WEIGHTS", "neural/weights/droid.pth")
 DEPTH_WEIGHTS = os.environ.get(
-    "DEPTH_WEIGHTS", "/workspace/neural/weights/depth_anything_v2_vits.pth"
+    "DEPTH_WEIGHTS", "neural/weights/depth_anything_v2_vits.pth"
 )
 MAX_FRAMES = int(os.environ.get("MAX_FRAMES", "0"))
 
@@ -65,7 +65,7 @@ cfg = {
             "radius": 2,
             "max_factors": 75,
             "keyframe_thresh": 4.0,
-            "enable_loop": True,
+            "enable_loop": False,
         },
         "loop_closure": {
             "window": 25,
@@ -74,10 +74,12 @@ cfg = {
             "nms": 12,
         },
         "global": {
+            "enabled": False,
             "freq": 20,
             "thresh": 25.0,
             "radius": 1,
             "nms": 5,
+            "normalize": False,
         },
         "motion_filter": {
             "thresh": 4,
@@ -219,8 +221,7 @@ def main():
             torch.cuda.synchronize()
             t0 = time.perf_counter()
 
-            mono_depth = depth_model(frame)
-            slam(frame, mono_depth)
+            slam(frame)
             torch.cuda.synchronize()
             dt = time.perf_counter() - t0
             times.append(dt)
@@ -251,6 +252,7 @@ def main():
         p90 = np.percentile(times, 80) * 1000
         print(f"Timing: avg {np.mean(times)*1000:.0f}ms, median {np.median(times)*1000:.0f}ms, p80 {p90:.0f}ms")
 
+    slam.finalize()
     # Extract trajectory
     est_positions = []
     gt_positions = []
