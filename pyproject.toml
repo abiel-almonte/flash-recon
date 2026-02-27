@@ -8,6 +8,7 @@ dependencies = [
     "torch",
     "torchvision",
     "opencv-python",
+    "evo",
 ]
 
 [tool.uv.sources]
