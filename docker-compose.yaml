@@ -14,8 +14,6 @@ services:
       - SYS_ADMIN
     security_opt:
       - seccomp:unconfined
-    devices:
-      - /dev/v4l/by-id/usb-Global_Shutter_Camera_Global_Shutter_Camera_01.00.00-video-index0:/dev/mapping-cam
     volumes:
       - .:/workspace
       - uv-cache:/root/.cache/uv
