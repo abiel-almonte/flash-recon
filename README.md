@@ -32,6 +32,11 @@ Evaluate on EuRoC:
 bash evals/evaluate_euroc.sh
 ```
 
+Run on TUM fr1_desk:
+```bash
+python -m examples.run_system  # forward ports 9090 & 9876
+```
+
 ---
 
 **flash-recon**, SLAM that doesn't make you wait.
