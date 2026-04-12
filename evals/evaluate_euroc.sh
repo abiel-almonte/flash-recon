@@ -32,7 +32,7 @@ RESULTS_FILE=$(mktemp)
 trap 'rm -f "$RESULTS_FILE"' EXIT
 
 echo "========================================"
-echo "  EuRoC Batch Evaluation (flash-recon)"
+echo "  EuRoC Batch Evaluation                "
 echo "========================================"
 echo ""
 
