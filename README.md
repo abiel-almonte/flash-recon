@@ -1,6 +1,6 @@
 `flash-recon` **- Real-time 3D reconstruction from monocular video.**
 
-Estimate poses, depth, and gaussians all at once.
+Estimate poses, depth, and gaussians all at once — visualize it live on your browser.
 
 ```python
 from flash_recon import System
