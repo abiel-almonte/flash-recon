@@ -17,16 +17,13 @@ CY = 120.0
 
 DATASET_ROOT = os.environ.get("DATASET_ROOT", "datasets/TUM/fr1_desk")
 WEIGHTS_PATH = os.environ.get("DROID_WEIGHTS", "neural/weights/droid.pth")
-DEPTH_WEIGHTS = os.environ.get(
-    "DEPTH_WEIGHTS", "neural/weights/depth_anything_v2_vits.pth"
-)
 
 MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
 STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
 cfg = {
     "device": "cuda:0",
-    "weights": {"droid": WEIGHTS_PATH, "depth": DEPTH_WEIGHTS},
+    "weights": {"droid": WEIGHTS_PATH},
     "cam": {
         "H_out": H_OUT,
         "W_out": W_OUT,
