@@ -29,7 +29,7 @@ trajectory = slam.buffer.get_cam2world(kf_idx)  # SE(3)
 
 Evaluate on EuRoC:
 ```bash
-bash evaluate_euroc.sh
+bash evals/evaluate_euroc.sh
 ```
 
 ---
