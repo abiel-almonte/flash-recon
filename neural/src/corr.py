@@ -26,8 +26,8 @@ class Corr:
                     self.max_factors, ht, wd, Hi, Wi, dtype=torch.half, device=device
                 )
             )
-            Hi = (Hi + 1) // 2
-            Wi = (Wi + 1) // 2
+            Hi = Hi // 2
+            Wi = Wi // 2
         self.num_edges = 0
 
     @torch.autocast("cuda", enabled=True)

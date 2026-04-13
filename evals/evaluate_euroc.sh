@@ -32,7 +32,7 @@ RESULTS_FILE=$(mktemp)
 trap 'rm -f "$RESULTS_FILE"' EXIT
 
 echo "========================================"
-echo "  EuRoC Batch Evaluation (flash-recon)"
+echo "  EuRoC Batch Evaluation                "
 echo "========================================"
 echo ""
 
@@ -70,7 +70,7 @@ for seq in "${evalset[@]}"; do
 
     echo "--- ${seq} ---"
     # Run evaluation and capture the RESULT line
-    output=$(python -m benchmark.eval_euroc \
+    output=$(python -m evals.eval_euroc \
         --datapath "$datapath" \
         --gt "$gt" \
         --weights "$WEIGHTS" \

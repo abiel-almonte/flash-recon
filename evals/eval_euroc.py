@@ -12,9 +12,6 @@ from scipy.spatial.transform import Rotation
 
 from flash_recon.slam import SLAM
 
-# ---------------------------------------------------------------------------
-# EuRoC left camera raw calibration (from sensor.yaml)
-# ---------------------------------------------------------------------------
 K_L = np.array([458.654, 0.0, 367.215,
                 0.0, 457.296, 248.375,
                 0.0, 0.0, 1.0]).reshape(3, 3)
@@ -30,40 +27,26 @@ P_L = np.array([
     0, 0, 1, 0,
 ]).reshape(3, 4)
 
-# Rectified intrinsics (after undistortion)
 FX_RECT = 435.2046959714599
 FY_RECT = 435.2046959714599
 CX_RECT = 367.4517211914062
 CY_RECT = 252.2008514404297
 HT_NATIVE, WD_NATIVE = 480, 752
 
-# ImageNet normalization
 MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
 STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
 
 def build_undistort_map():
-    """Build OpenCV remap tables for EuRoC left camera undistortion+rectification."""
     return cv2.initUndistortRectifyMap(
         K_L, D_L, R_L, P_L[:3, :3], (WD_NATIVE, HT_NATIVE), cv2.CV_32F
     )
 
 
 def resolve_euroc_datapath(datapath):
-    """Resolve EuRoC datapath, handling the grouped archive layout.
-
-    The ETH Research Collection archives extract to:
-        datasets/EuRoC/machine_hall/MH_01_easy/mav0/...
-        datasets/EuRoC/vicon_room1/V1_01_easy/mav0/...
-        datasets/EuRoC/vicon_room2/V2_01_easy/mav0/...
-
-    But users may pass datasets/EuRoC/MH_01_easy (flat layout).
-    This function checks both and returns the path that has images.
-    """
     if os.path.isdir(os.path.join(datapath, "mav0")):
         return datapath
 
-    # Try grouped layout: infer subfolder from sequence name
     scene = os.path.basename(os.path.normpath(datapath))
     parent = os.path.dirname(os.path.normpath(datapath))
     if scene.startswith("MH"):
@@ -78,11 +61,10 @@ def resolve_euroc_datapath(datapath):
     if os.path.isdir(os.path.join(grouped, "mav0")):
         return grouped
 
-    return datapath  # fall through, will error later with a clear message
+    return datapath
 
 
 class EuRoCImageStream:
-    """Lazy image loader for EuRoC sequences — loads one frame at a time."""
 
     def __init__(self, datapath, image_size, stride=1, max_frames=0):
         datapath = resolve_euroc_datapath(datapath)
@@ -121,7 +103,6 @@ class EuRoCImageStream:
         return len(self.entries)
 
     def __getitem__(self, idx):
-        """Load and preprocess a single frame. Returns (tstamp_ns, tensor[1,3,H,W])."""
         tstamp_ns, img_path = self.entries[idx]
 
         img = cv2.imread(img_path)
@@ -142,11 +123,6 @@ class EuRoCImageStream:
 
 
 def load_euroc_groundtruth(gt_path):
-    """Load EuRoC ground truth file.
-
-    Format: timestamp_ns px py pz qw qx qy qz
-    Returns parallel arrays of (timestamps_s, positions, quaternions_wxyz).
-    """
     timestamps = []
     positions = []
     quats_wxyz = []
@@ -171,7 +147,6 @@ def load_euroc_groundtruth(gt_path):
 
 
 def pose_matrix_to_pos_quat_wxyz(c2w):
-    """Convert 4x4 cam2world matrix to (position, quaternion_wxyz)."""
     pos = c2w[:3, 3]
     R = c2w[:3, :3]
     # scipy uses xyzw internally
@@ -183,7 +158,6 @@ def pose_matrix_to_pos_quat_wxyz(c2w):
 
 def evaluate_ate_evo(est_timestamps, est_positions, est_quats_wxyz,
                      gt_path):
-    """Compute ATE using evo library with Sim(3) alignment."""
     from evo.core import sync
     from evo.core.metrics import PoseRelation
     from evo.core.trajectory import PoseTrajectory3D
@@ -350,14 +324,12 @@ def main():
             f"p80 {np.percentile(times, 80)*1000:.0f}ms"
         )
 
-    # Terminal global BA (mirrors DROID-SLAM's backend(7) + backend(12))
     print("\nRunning terminal global BA...")
     torch.cuda.empty_cache()
     t_final = time.perf_counter()
     slam.finalize(steps_per_pass=(7, 12))
     print(f"  Terminal BA: {time.perf_counter() - t_final:.1f}s")
 
-    # Extract estimated trajectory from keyframe poses
     est_timestamps = []
     est_positions = []
     est_quats_wxyz = []
@@ -383,7 +355,6 @@ def main():
     est_travel = np.linalg.norm(np.diff(est_positions, axis=0), axis=1).sum()
     print(f"  Est travel: {est_travel:.3f}")
 
-    # Evaluate ATE with evo
     print("\nComputing ATE (evo, Sim(3) alignment)...")
     result = evaluate_ate_evo(est_timestamps, est_positions, est_quats_wxyz, args.gt)
 
@@ -398,7 +369,6 @@ def main():
     print(f"  ATE max:    {ate_max:.4f} m")
     print(f"  Keyframes:  {len(est_positions)}")
 
-    # Print single-line summary for batch parsing
     print(f"\nRESULT {scene} {ate_rmse:.6f}")
 
 
