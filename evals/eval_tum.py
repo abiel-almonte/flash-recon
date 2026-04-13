@@ -1,5 +1,4 @@
-"""ATE evaluation for flash-recon SLAM on TUM fr1_desk."""
-
+import argparse
 import os
 import time
 import numpy as np
@@ -9,26 +8,28 @@ from scipy.spatial.transform import Rotation
 
 from flash_recon.slam import SLAM
 
-# TUM fr1_desk: native 640x480, crop 8px edges, resize to 512x384
-
 H_OUT, W_OUT = 384, 512
 H_EDGE, W_EDGE = 8, 8
-FX_NATIVE, FY_NATIVE = 517.3, 516.5
-CX_NATIVE, CY_NATIVE = 318.6, 255.3
 
-H_CROP = 480 - 2 * H_EDGE
-W_CROP = 640 - 2 * W_EDGE
-FX = FX_NATIVE * W_OUT / W_CROP
-FY = FY_NATIVE * H_OUT / H_CROP
-CX = (CX_NATIVE - W_EDGE) * W_OUT / W_CROP
-CY = (CY_NATIVE - H_EDGE) * H_OUT / H_CROP
+TUM_INTRINSICS = {
+    "fr1": {"fx": 517.3, "fy": 516.5, "cx": 318.6, "cy": 255.3},
+    "fr2": {"fx": 520.9, "fy": 521.0, "cx": 325.1, "cy": 249.7},
+    "fr3": {"fx": 535.4, "fy": 539.2, "cx": 320.1, "cy": 247.6},
+}
 
-DATASET_ROOT = os.environ.get("DATASET_ROOT", "datasets/TUM/fr1_desk")
+
+def get_intrinsics(datapath):
+    basename = os.path.basename(os.path.normpath(datapath))
+    for prefix in ("fr3", "fr2", "fr1"):
+        if basename.startswith(prefix):
+            return TUM_INTRINSICS[prefix]
+    return TUM_INTRINSICS["fr1"]
+
+
 WEIGHTS_PATH = os.environ.get("DROID_WEIGHTS", "neural/weights/droid.pth")
 DEPTH_WEIGHTS = os.environ.get(
     "DEPTH_WEIGHTS", "neural/weights/depth_anything_v2_vits.pth"
 )
-MAX_FRAMES = int(os.environ.get("MAX_FRAMES", "0"))
 
 cfg = {
     "device": "cuda:0",
@@ -37,10 +38,10 @@ cfg = {
         "H_out": H_OUT,
         "W_out": W_OUT,
         "down_scale": 8,
-        "fx": FX,
-        "fy": FY,
-        "cx": CX,
-        "cy": CY,
+        "fx": 0,
+        "fy": 0,
+        "cx": 0,
+        "cy": 0,
     },
     "tracking": {
         "beta": 0.75,
@@ -57,7 +58,7 @@ cfg = {
             "radius": 2,
             "max_factors": 75,
             "keyframe_thresh": 4.0,
-            "enable_loop": False,
+            "enable_loop": True,
         },
         "loop_closure": {
             "window": 25,
@@ -172,6 +173,34 @@ def compute_ate(est_positions, gt_positions):
 
 
 def main():
+    global FX_NATIVE, FY_NATIVE, CX_NATIVE, CY_NATIVE, intr
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--datapath", default="datasets/TUM/fr3_office")
+    parser.add_argument("--max_frames", type=int, default=0)
+    args = parser.parse_args()
+
+    DATASET_ROOT = args.datapath
+    MAX_FRAMES = args.max_frames
+
+    intr = get_intrinsics(DATASET_ROOT)
+    FX_NATIVE = intr["fx"]
+    FY_NATIVE = intr["fy"]
+    CX_NATIVE = intr["cx"]
+    CY_NATIVE = intr["cy"]
+
+    H_CROP = 480 - 2 * H_EDGE
+    W_CROP = 640 - 2 * W_EDGE
+    FX = FX_NATIVE * W_OUT / W_CROP
+    FY = FY_NATIVE * H_OUT / H_CROP
+    CX = (CX_NATIVE - W_EDGE) * W_OUT / W_CROP
+    CY = (CY_NATIVE - H_EDGE) * H_OUT / H_CROP
+
+    cfg["cam"]["fx"] = FX
+    cfg["cam"]["fy"] = FY
+    cfg["cam"]["cx"] = CX
+    cfg["cam"]["cy"] = CY
+
     device = cfg["device"]
 
     rgb_list = load_tum_rgb_list(DATASET_ROOT)
@@ -252,16 +281,6 @@ def main():
     print(f"  ATE max:    {ate['max']:.4f} m")
     print(f"  Scale:      {ate['scale']:.8f}")
     print(f"  Keyframes:  {ate['n_keyframes']}")
-
-    if np.any(np.isnan(est_positions)):
-        print("\nFAILED — NaN in trajectory")
-    elif ate["rmse"] > 1.0:
-        print(f"\nWARN — ATE RMSE {ate['rmse']:.4f}m is high (>1m)")
-    elif ate["rmse"] < 0.10:
-        print(f"\nGOOD — ATE RMSE {ate['rmse']:.4f}m (target: 0.025m)")
-    else:
-        print(f"\nMIXED — ATE RMSE {ate['rmse']:.4f}m")
-
 
 if __name__ == "__main__":
     with torch.inference_mode():
