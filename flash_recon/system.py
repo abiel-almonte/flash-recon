@@ -5,12 +5,11 @@ from collections import defaultdict
 from queue import Queue, Empty
 
 import torch
-from neural import MonoDepth
+from geometry import pose_to_matrix
 
 from .slam import SLAM
 from .splat import Splat
 from .viewer import Viewer
-from geometry import pose_to_matrix
 
 FrameGenerator = Iterator[torch.Tensor]
 
@@ -51,7 +50,6 @@ class System:
         self.slam = SLAM(cfg)
         self.splat = Splat(cfg)
         self.viewer = Viewer(cfg)
-        self.depth_model = MonoDepth(cfg).to("cuda")
 
         self._prev_n_keyframes = 0
         self._keyframe_q = Queue()
@@ -83,8 +81,7 @@ class System:
         self._prev_n_keyframes = self.slam.n_keyframes
 
         with torch.inference_mode():
-            depth = self.depth_model(frame)
-            self.slam(frame, depth)
+            self.slam(frame)
 
             _logger.log50(
                 "slammer.track",

@@ -9,7 +9,11 @@ class Corr:
         self.cfg = cfg
         self.num_levels = int(cfg.get("corr_block", {}).get("num_levels", 4))
         self.radius = int(cfg.get("corr_block", {}).get("radius", 3))
-        self.max_factors = int(cfg.get("tracking", {}).get("max_factors", 512))
+        self.max_factors = int(
+            cfg.get("corrblock", {}).get(
+                "max_slots", int(cfg.get("tracking", {}).get("max_factors", 512))
+            )
+        )
         self.pyramid = None  # Pre-allocated: [max_factors, ht, wd, Hi, Wi] per level
         self.num_edges = 0
 
@@ -22,8 +26,8 @@ class Corr:
                     self.max_factors, ht, wd, Hi, Wi, dtype=torch.half, device=device
                 )
             )
-            Hi = (Hi + 1) // 2
-            Wi = (Wi + 1) // 2
+            Hi = Hi // 2
+            Wi = Wi // 2
         self.num_edges = 0
 
     @torch.autocast("cuda", enabled=True)

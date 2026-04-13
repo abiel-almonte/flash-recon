@@ -1,6 +1,6 @@
 [project]
 name = "flash-recon"
-version = "0.4.0"
+version = "1.0.0"
 description = "Accelerating video odometry"
 readme = "README.md"
 requires-python = "==3.12.*"
@@ -8,6 +8,7 @@ dependencies = [
     "torch",
     "torchvision",
     "opencv-python",
+    "evo",
 ]
 
 [tool.uv.sources]

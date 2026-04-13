@@ -11,6 +11,7 @@ RUN apt update && apt install -y \
     wget \
     curl \
     unzip \
+    bc \
     git \ 
     libgl1 \ 
     libglib2.0-0

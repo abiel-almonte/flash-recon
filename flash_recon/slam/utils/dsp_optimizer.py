@@ -95,6 +95,7 @@ class DSPOptimizer:
             ctx.alpha,
             ctx.num_fixed_poses,
             ctx.rig_size,
+            lowmem=ctx.lowmem,
         )
         ctx.poses = poses_out
         ctx.disps = disps_out

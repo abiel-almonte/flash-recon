@@ -1,42 +1,35 @@
-"""ATE evaluation for refactored SLAM on TUM fr1_desk.
-
-Same as eval_ate.py but:
-  - Imports from flash_recon.slam.refactored
-  - Uses hybrid-compatible config
-  - Upscales mono_depth to full res (matching reference pipeline)
-"""
-
+import argparse
 import os
 import time
 import numpy as np
 import torch
-import torch.nn.functional as F
 from PIL import Image
 from scipy.spatial.transform import Rotation
 
 from flash_recon.slam import SLAM
-from neural import MonoDepth
-
-# TUM fr1_desk: native 640x480, crop 8px edges, resize to 512x384
 
 H_OUT, W_OUT = 384, 512
 H_EDGE, W_EDGE = 8, 8
-FX_NATIVE, FY_NATIVE = 517.3, 516.5
-CX_NATIVE, CY_NATIVE = 318.6, 255.3
 
-H_CROP = 480 - 2 * H_EDGE
-W_CROP = 640 - 2 * W_EDGE
-FX = FX_NATIVE * W_OUT / W_CROP
-FY = FY_NATIVE * H_OUT / H_CROP
-CX = (CX_NATIVE - W_EDGE) * W_OUT / W_CROP
-CY = (CY_NATIVE - H_EDGE) * H_OUT / H_CROP
+TUM_INTRINSICS = {
+    "fr1": {"fx": 517.3, "fy": 516.5, "cx": 318.6, "cy": 255.3},
+    "fr2": {"fx": 520.9, "fy": 521.0, "cx": 325.1, "cy": 249.7},
+    "fr3": {"fx": 535.4, "fy": 539.2, "cx": 320.1, "cy": 247.6},
+}
 
-DATASET_ROOT = os.environ.get("DATASET_ROOT", "/workspace/datasets/desk")
-WEIGHTS_PATH = os.environ.get("DROID_WEIGHTS", "/workspace/neural/weights/droid.pth")
+
+def get_intrinsics(datapath):
+    basename = os.path.basename(os.path.normpath(datapath))
+    for prefix in ("fr3", "fr2", "fr1"):
+        if basename.startswith(prefix):
+            return TUM_INTRINSICS[prefix]
+    return TUM_INTRINSICS["fr1"]
+
+
+WEIGHTS_PATH = os.environ.get("DROID_WEIGHTS", "neural/weights/droid.pth")
 DEPTH_WEIGHTS = os.environ.get(
-    "DEPTH_WEIGHTS", "/workspace/neural/weights/depth_anything_v2_vits.pth"
+    "DEPTH_WEIGHTS", "neural/weights/depth_anything_v2_vits.pth"
 )
-MAX_FRAMES = int(os.environ.get("MAX_FRAMES", "0"))
 
 cfg = {
     "device": "cuda:0",
@@ -45,10 +38,10 @@ cfg = {
         "H_out": H_OUT,
         "W_out": W_OUT,
         "down_scale": 8,
-        "fx": FX,
-        "fy": FY,
-        "cx": CX,
-        "cy": CY,
+        "fx": 0,
+        "fy": 0,
+        "cx": 0,
+        "cy": 0,
     },
     "tracking": {
         "beta": 0.75,
@@ -74,10 +67,12 @@ cfg = {
             "nms": 12,
         },
         "global": {
+            "enabled": False,
             "freq": 20,
             "thresh": 25.0,
             "radius": 1,
             "nms": 5,
+            "normalize": False,
         },
         "motion_filter": {
             "thresh": 4,
@@ -121,17 +116,6 @@ def load_tum_groundtruth(root):
     entries.sort(key=lambda x: x[0])
     return entries
 
-
-def associate_timestamps(rgb_timestamps, gt_entries, max_diff=0.02):
-    gt_ts = np.array([e[0] for e in gt_entries])
-    associations = []
-    for rgb_ts in rgb_timestamps:
-        idx = np.argmin(np.abs(gt_ts - rgb_ts))
-        if abs(gt_ts[idx] - rgb_ts) < max_diff:
-            associations.append(gt_entries[idx])
-        else:
-            associations.append(None)
-    return associations
 
 
 def gt_to_matrix(entry):
@@ -189,6 +173,34 @@ def compute_ate(est_positions, gt_positions):
 
 
 def main():
+    global FX_NATIVE, FY_NATIVE, CX_NATIVE, CY_NATIVE, intr
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--datapath", default="datasets/TUM/fr3_office")
+    parser.add_argument("--max_frames", type=int, default=0)
+    args = parser.parse_args()
+
+    DATASET_ROOT = args.datapath
+    MAX_FRAMES = args.max_frames
+
+    intr = get_intrinsics(DATASET_ROOT)
+    FX_NATIVE = intr["fx"]
+    FY_NATIVE = intr["fy"]
+    CX_NATIVE = intr["cx"]
+    CY_NATIVE = intr["cy"]
+
+    H_CROP = 480 - 2 * H_EDGE
+    W_CROP = 640 - 2 * W_EDGE
+    FX = FX_NATIVE * W_OUT / W_CROP
+    FY = FY_NATIVE * H_OUT / H_CROP
+    CX = (CX_NATIVE - W_EDGE) * W_OUT / W_CROP
+    CY = (CY_NATIVE - H_EDGE) * H_OUT / H_CROP
+
+    cfg["cam"]["fx"] = FX
+    cfg["cam"]["fy"] = FY
+    cfg["cam"]["cx"] = CX
+    cfg["cam"]["cy"] = CY
+
     device = cfg["device"]
 
     rgb_list = load_tum_rgb_list(DATASET_ROOT)
@@ -197,49 +209,30 @@ def main():
     rgb_list = rgb_list[:n_frames]
     print(f"Dataset: {DATASET_ROOT} ({len(rgb_list)} frames)")
 
-    rgb_timestamps = [ts for ts, _ in rgb_list]
-    gt_associations = associate_timestamps(rgb_timestamps, gt_entries)
-    n_associated = sum(1 for g in gt_associations if g is not None)
-    print(f"GT associations: {n_associated}/{len(rgb_list)} frames")
-
-    depth_model = MonoDepth(cfg).to(device).eval()
-    print("DepthAnythingV2 loaded")
+    gt_ts = np.array([e[0] for e in gt_entries])
 
     slam = SLAM(cfg)
-    print("Refactored SLAM initialized")
+    print("SLAM initialized")
 
-    keyframe_frame_indices = []
     times = []
 
     try:
-        for i, (_, path) in enumerate(rgb_list):
+        for i, (ts, path) in enumerate(rgb_list):
             frame = load_and_preprocess(path, device)
 
-            prev_count = len(slam.buffer)
             torch.cuda.synchronize()
             t0 = time.perf_counter()
 
-            mono_depth = depth_model(frame)
-            slam(frame, mono_depth)
+            slam(frame, tstamp=ts)
             torch.cuda.synchronize()
             dt = time.perf_counter() - t0
             times.append(dt)
-
-            if len(slam.buffer) > prev_count:
-                keyframe_frame_indices.append(i)
 
             if i % 50 == 0:
                 n_edges = len(slam)
                 print(
                     f"  frame {i:4d}/{n_frames} | kf: {len(slam.buffer)} | "
                     f"edges: {n_edges} | {dt*1000:.0f}ms"
-                )
-                alloc = torch.cuda.memory_allocated() / 1e6
-                reserved = torch.cuda.memory_reserved() / 1e6
-                n_inac = slam.graph.ii_inac.numel()
-                print(
-                    f"    GPU: {alloc:.0f}MB alloc, {reserved:.0f}MB reserved | "
-                    f"inac: {n_inac}"
                 )
 
     except torch.OutOfMemoryError:
@@ -251,18 +244,20 @@ def main():
         p90 = np.percentile(times, 80) * 1000
         print(f"Timing: avg {np.mean(times)*1000:.0f}ms, median {np.median(times)*1000:.0f}ms, p80 {p90:.0f}ms")
 
-    # Extract trajectory
+    slam.finalize()
+
+    # Extract trajectory — use timestamps stored on keyframes
     est_positions = []
     gt_positions = []
-    for kf_idx, frame_idx in enumerate(keyframe_frame_indices):
-        if kf_idx >= n_kf:
-            break
-        gt_entry = gt_associations[frame_idx]
-        if gt_entry is None:
+    for kf_idx in range(n_kf):
+        kf_ts = slam.buffer.get_tstamp(kf_idx)
+        # find nearest GT entry by timestamp
+        idx = np.argmin(np.abs(gt_ts - kf_ts))
+        if abs(gt_ts[idx] - kf_ts) > 0.02:
             continue
         c2w = slam.buffer.get_cam2world(kf_idx).cpu().numpy()
         est_positions.append(c2w[:3, 3])
-        gt_mat = gt_to_matrix(gt_entry)
+        gt_mat = gt_to_matrix(gt_entries[idx])
         gt_positions.append(gt_mat[:3, 3])
 
     est_positions = np.array(est_positions)
@@ -286,16 +281,6 @@ def main():
     print(f"  ATE max:    {ate['max']:.4f} m")
     print(f"  Scale:      {ate['scale']:.8f}")
     print(f"  Keyframes:  {ate['n_keyframes']}")
-
-    if np.any(np.isnan(est_positions)):
-        print("\nFAILED — NaN in trajectory")
-    elif ate["rmse"] > 1.0:
-        print(f"\nWARN — ATE RMSE {ate['rmse']:.4f}m is high (>1m)")
-    elif ate["rmse"] < 0.10:
-        print(f"\nGOOD — ATE RMSE {ate['rmse']:.4f}m (target: 0.025m)")
-    else:
-        print(f"\nMIXED — ATE RMSE {ate['rmse']:.4f}m")
-
 
 if __name__ == "__main__":
     with torch.inference_mode():

@@ -9,30 +9,21 @@ from PIL import Image
 
 from flash_recon import System
 
-H_OUT, W_OUT = 384, 512
-H_EDGE, W_EDGE = 8, 8
-FX_NATIVE, FY_NATIVE = 517.3, 516.5
-CX_NATIVE, CY_NATIVE = 318.6, 255.3
+H_OUT, W_OUT = 240, 320
+FX = 128.0
+FY = 128.0
+CX = 160.0
+CY = 120.0
 
-H_CROP = 480 - 2 * H_EDGE
-W_CROP = 640 - 2 * W_EDGE
-FX = FX_NATIVE * W_OUT / W_CROP
-FY = FY_NATIVE * H_OUT / H_CROP
-CX = (CX_NATIVE - W_EDGE) * W_OUT / W_CROP
-CY = (CY_NATIVE - H_EDGE) * H_OUT / H_CROP
-
-DATASET_ROOT = os.environ.get("DATASET_ROOT", "/workspace/datasets/desk")
-WEIGHTS_PATH = os.environ.get("DROID_WEIGHTS", "/workspace/neural/weights/droid.pth")
-DEPTH_WEIGHTS = os.environ.get(
-    "DEPTH_WEIGHTS", "/workspace/neural/weights/depth_anything_v2_vits.pth"
-)
+DATASET_ROOT = os.environ.get("DATASET_ROOT", "datasets/TUM/fr1_desk")
+WEIGHTS_PATH = os.environ.get("DROID_WEIGHTS", "neural/weights/droid.pth")
 
 MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
 STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
 cfg = {
     "device": "cuda:0",
-    "weights": {"droid": WEIGHTS_PATH, "depth": DEPTH_WEIGHTS},
+    "weights": {"droid": WEIGHTS_PATH},
     "cam": {
         "H_out": H_OUT,
         "W_out": W_OUT,
@@ -71,6 +62,7 @@ cfg = {
             "radius": 1,
             "nms": 5,
             "normalize": False,
+            "enabled": False,
         },
         "motion_filter": {
             "thresh": 4,
@@ -91,24 +83,8 @@ cfg = {
 }
 
 
-def load_tum_rgb_list(root):
-    rgb_txt = os.path.join(root, "rgb.txt")
-    entries = []
-    with open(rgb_txt) as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith("#") or not line:
-                continue
-            ts, path = line.split()
-            entries.append((float(ts), os.path.join(root, path)))
-    entries.sort(key=lambda x: x[0])
-    return entries
-
-
 def load_rgb(path, device):
     img = np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
-    if H_EDGE > 0 or W_EDGE > 0:
-        img = img[H_EDGE:-H_EDGE, W_EDGE:-W_EDGE]
     img = Image.fromarray((img * 255).astype(np.uint8))
     img = img.resize((W_OUT, H_OUT), Image.BILINEAR)
     img = np.array(img, dtype=np.float32) / 255.0
@@ -119,20 +95,23 @@ def preprocess(img, device):
     frame = img.permute(2, 0, 1).unsqueeze(0)
     return (frame - MEAN.to(device)) / STD.to(device)
 
+from visionrt import Camera, Preprocessor
 
+ppc = Preprocessor()
 def main():
-    device = cfg["device"]
-    rgb_list = load_tum_rgb_list(DATASET_ROOT)
-
+    #device = cfg["device"]
+    camera = Camera("/dev/mapping-cam")
     system = System(cfg, persist=True)
 
     def _f():
-        for _, path in rgb_list:
-
-            rgb = load_rgb(path, device)
-            frame = preprocess(rgb, device)
-
-            yield frame, rgb
+        dev = torch.device(cfg["device"])
+        mean = MEAN.to(dev)
+        std = STD.to(dev)
+        for yuyv in camera.stream():
+            frame = ppc(yuyv)                        # [1, 3, H, W] normalized
+            raw = frame.squeeze(0) * std + mean      # denormalize -> [3, H, W] in [0,1]
+            raw = raw.permute(1, 2, 0).clamp(0, 1)   # -> [H, W, 3]
+            yield frame, raw
         
     system.set_frame_generator(_f())
 

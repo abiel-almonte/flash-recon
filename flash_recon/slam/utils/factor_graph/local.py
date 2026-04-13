@@ -1,7 +1,5 @@
-from typing import Tuple
 import torch
 
-from neural import Corr
 from geometry import projective_transform, compute_distance
 
 from .base import FactorGraph, Tensors
@@ -12,9 +10,6 @@ from .. import KeyFrameBuffer
 class LocalGraph(FactorGraph):
     def __init__(self, cfg):
         super().__init__(cfg)
-
-        self.corr = None
-        self.inp = None
 
         self.ii_inac = torch.as_tensor([], dtype=torch.long, device=self.device)
         self.jj_inac = torch.as_tensor([], dtype=torch.long, device=self.device)
@@ -32,15 +27,8 @@ class LocalGraph(FactorGraph):
     def inactives(self) -> Tensors:
         return (self.ii_inac, self.jj_inac, self.target_inac, self.weight_inac)
 
-    def get_neural_attrs(self) -> Tensors:
-        return (super().get_neural_attrs(), self.inp)
-
-    def corr_initialized(self) -> bool:
-        return self.corr is not None
-
-    def apply_corr(self, coords: torch.Tensor) -> torch.Tensor | None:
-        if self.corr_initialized():
-            return self.corr(coords)
+    def has_edges(self) -> bool:
+        return self.ii.shape[0] > 0
 
     def _all_edge_set(self) -> tuple:
         return set(
@@ -72,33 +60,22 @@ class LocalGraph(FactorGraph):
             torch.cat([self.jj, self.jj_bad, self.jj_inac], 0),
         )
 
-    def add(self, ii, jj, net, inp, target, *, fmaps=None, remove=False) -> None:
+    def add(self, ii, jj, net, target, *, remove=False) -> None:
         ii, jj = self._to_long(ii), self._to_long(jj)
 
         keep = self._dedup_mask(ii, jj)
         ii, jj = ii[keep].contiguous(), jj[keep].contiguous()
         net = net[keep].contiguous()
-        inp = inp[keep].contiguous() if inp is not None else None
         target = target[keep].contiguous()
-        if fmaps is not None:
-            fmaps = (fmaps[0][keep].contiguous(), fmaps[1][keep].contiguous())
 
         if ii.shape[0] == 0:
             return
 
-        if self.max_factors > 0 and self.corr is not None and remove:
+        if self.max_factors > 0 and self.has_edges() and remove:
             if self.ii.shape[0] + ii.shape[0] > self.max_factors:
                 self._evict_oldest(ii.shape[0], self.max_factors)
 
-        if fmaps is not None:
-            fmap1, fmap2 = fmaps
-            if self.corr is None:
-                self.corr = Corr(self.cfg)
-            self.corr.build_pyramid(fmap1, fmap2)
-
         self._append(ii, jj, net, target, torch.zeros_like(target))
-        if inp is not None:
-            self.inp = inp if self.inp is None else torch.cat([self.inp, inp], 0)
 
     def add_from_buffer(
         self,
@@ -110,18 +87,13 @@ class LocalGraph(FactorGraph):
         ii = self._to_long(ii)
         jj = self._to_long(jj)
 
-        fmaps, nets, inps = buffer.get_neural_attrs()
-
+        _, nets, _ = buffer.get_neural_attrs()
         net = nets[ii].half()
-        inp = inps[ii].half()
-        c = (ii == jj).long()
-        fmap1 = fmaps[ii, 0].half()
-        fmap2 = fmaps[jj, c].half()
 
         poses, disps, intrinsics = buffer.get_geometric_attrs()
         target, _ = projective_transform(poses, disps, intrinsics, ii, jj)
 
-        self.add(ii, jj, net, inp, target, fmaps=(fmap1, fmap2), remove=remove)
+        self.add(ii, jj, net, target, remove=remove)
 
     def add_proximity_edges(
         self,
@@ -178,16 +150,13 @@ class LocalGraph(FactorGraph):
             self.target_inac = torch.cat([self.target_inac, self.target[mask]], 0)
             self.weight_inac = torch.cat([self.weight_inac, self.weight[mask]], 0)
 
-        keep = ~mask
-        if self.corr is not None:
-            self.corr.filter_pyramid(keep)
-        if self.inp is not None:
-            self.inp = self.inp[keep]
-
         super().remove(mask, store=False)
 
     @torch.autocast("cuda", enabled=True)
-    def remove_keyframe(self, ix: int) -> None:
+    def remove_keyframe(self, ix: int, count: int) -> None:
+        if ix < count - 1:
+            self.damping[ix : count - 1] = self.damping[ix + 1 : count].clone()
+
         # Shift + prune inactive edges
         m = (self.ii_inac == ix) | (self.jj_inac == ix)
         self.ii_inac[self.ii_inac >= ix] -= 1
