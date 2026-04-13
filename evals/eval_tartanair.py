@@ -20,7 +20,7 @@ MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
 STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
 MONO_SCENES = [f"M{s}{i:03d}" for s in ["E", "H"] for i in range(8)]
-j
+
 
 def load_images(datapath, sequence):
     img_dir = os.path.join(datapath, sequence, "image_left")
