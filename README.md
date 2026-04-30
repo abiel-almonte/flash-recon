@@ -1,7 +1,7 @@
 `flash-recon` **- Real-time 3D reconstruction from monocular video.**
 
 <p align="center">
-  <img src="assets/demo.gif" alt="VOOM demo" width="800"/>
+  <img src="assets/euroc.gif" alt="VOOM demo" width="800"/>
 </p>
 
 Estimate poses, depth, and gaussians all at once — visualize it live on your browser.
