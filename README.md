@@ -19,19 +19,6 @@ system.set_frame_generator(frames())
 system.run()  # open http://localhost:9876
 ```
 
-Run SLAM standalone for evaluation:
-
-```python
-from flash_recon.slam import SLAM
-
-slam = SLAM(cfg)
-for frame in video:
-    slam(frame, tstamp=t)
-
-slam.finalize()
-trajectory = slam.buffer.get_cam2world(kf_idx)  # SE(3)
-```
-
 Evaluate on EuRoC:
 
 ```bash
